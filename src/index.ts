@@ -236,8 +236,7 @@ async function install(prefix: string): Promise<void> {
 }
 
 
-async function run(prefix: string, args: string[]): Promise<void> {
-  debugger;
+async function run(prefix: string, args: string[], useNightshiftTui: boolean): Promise<void> {
   prefix = resolve(prefix);
   const binDir = join(prefix, "bin");
   const venvBin = join(prefix, "venvs", "data-science", "bin");
@@ -249,21 +248,78 @@ async function run(prefix: string, args: string[]): Promise<void> {
 
   const PATH = `${venvBin}:${binDir}:${process.env.PATH ?? ""}`;
 
-  console.log(`Launching opencode with isolated PATH`);
-  console.log(`  PATH prefix: ${venvBin}:${binDir}`);
+  if (useNightshiftTui) {
+    // Start opencode as a server and attach nightshift TUI
+    await runWithNightshiftTui(opencode, PATH, args);
+  } else {
+    // Standard opencode execution
+    console.log(`Launching opencode with isolated PATH`);
+    console.log(`  PATH prefix: ${venvBin}:${binDir}`);
 
-  const proc = Bun.spawn([opencode, ...args], {
-    stdout: "inherit",
-    stderr: "inherit",
-    stdin: "inherit",
+    const proc = Bun.spawn([opencode, ...args], {
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "inherit",
+      env: {
+        ...process.env,
+        PATH,
+      },
+    });
+
+    const exitCode = await proc.exited;
+    process.exit(exitCode);
+  }
+}
+
+async function runWithNightshiftTui(opencodePath: string, PATH: string, _args: string[]): Promise<void> {
+  // Find an available port
+  const port = 4096 + Math.floor(Math.random() * 1000);
+  const url = `http://127.0.0.1:${port}`;
+
+  console.log(`Starting opencode server on port ${port}...`);
+
+  // Start opencode as a daemon/server
+  const serverProc = Bun.spawn([opencodePath, "serve", "--port", String(port)], {
+    stdout: "pipe",
+    stderr: "pipe",
     env: {
       ...process.env,
       PATH,
     },
   });
 
-  const exitCode = await proc.exited;
-  process.exit(exitCode);
+  // Wait for server to be ready
+  let ready = false;
+  const maxAttempts = 30;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const response = await fetch(`${url}/api/v2/global/health`);
+      if (response.ok) {
+        ready = true;
+        break;
+      }
+    } catch {
+      // Server not ready yet
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  if (!ready) {
+    serverProc.kill();
+    throw new Error("Failed to start opencode server");
+  }
+
+  console.log(`Server ready. Launching Nightshift TUI...`);
+
+  // Import and launch the nightshift TUI
+  const { attach } = await import("./cmd/tui/attach");
+
+  try {
+    await attach({ url });
+  } finally {
+    // Clean up server when TUI exits
+    serverProc.kill();
+  }
 }
 
 
@@ -290,23 +346,57 @@ yargs(process.argv.slice(2))
     "run",
     "Launch opencode with isolated env",
     (y) =>
-      y.option("prefix", {
-        type: "string",
-        demandOption: true,
-        describe: "Prefix where tools are installed",
-      }),
+      y
+        .option("prefix", {
+          type: "string",
+          demandOption: true,
+          describe: "Prefix where tools are installed",
+        })
+        .option("run-nightshift-tui", {
+          type: "boolean",
+          default: false,
+          describe: "Use Nightshift TUI instead of default opencode",
+        }),
     async (argv) => {
       try {
         const dashIdx = process.argv.indexOf("--");
         const extra = dashIdx >= 0 ? process.argv.slice(dashIdx + 1) : [];
-        await run(argv.prefix, extra);
+        await run(argv.prefix, extra, argv["run-nightshift-tui"]);
       } catch (err) {
         console.error("Run failed:", err);
         process.exit(1);
       }
     },
   )
-  .demandCommand(1, "Please specify a command: install or run")
+  .command(
+    "attach <url>",
+    "Attach to a running opencode server",
+    (y) =>
+      y
+        .positional("url", {
+          type: "string",
+          demandOption: true,
+          describe: "URL of the opencode server (e.g., http://localhost:4096)",
+        })
+        .option("session", {
+          alias: "s",
+          type: "string",
+          describe: "Session ID to continue",
+        }),
+    async (argv) => {
+      try {
+        const { attach } = await import("./cmd/tui/attach");
+        await attach({
+          url: argv.url!,
+          sessionID: argv.session,
+        });
+      } catch (err) {
+        console.error("Attach failed:", err);
+        process.exit(1);
+      }
+    },
+  )
+  .demandCommand(1, "Please specify a command: install, run, or attach")
   .strict()
   .help()
   .parse();
