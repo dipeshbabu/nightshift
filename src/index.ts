@@ -237,6 +237,7 @@ async function install(prefix: string): Promise<void> {
 
 
 async function run(prefix: string, args: string[]): Promise<void> {
+  debugger;
   prefix = resolve(prefix);
   const binDir = join(prefix, "bin");
   const venvBin = join(prefix, "venvs", "data-science", "bin");
