@@ -170,6 +170,7 @@ async function createVenv(prefix: string): Promise<void> {
   const venvPath = join(prefix, "venvs", "data-science");
   mkdirSync(dirname(venvPath), { recursive: true });
 
+
   const proc = Bun.spawn([python, "-m", "venv", venvPath], {
     stdout: "inherit",
     stderr: "inherit",
@@ -278,7 +279,7 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, _args: s
 
   console.log(`Starting opencode server on port ${port}...`);
 
-  // Start opencode as a daemon/server
+  // Start opencode as a server
   const serverProc = Bun.spawn([opencodePath, "serve", "--port", String(port)], {
     stdout: "pipe",
     stderr: "pipe",
@@ -293,7 +294,7 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, _args: s
   const maxAttempts = 30;
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      const response = await fetch(`${url}/api/v2/global/health`);
+      const response = await fetch(`${url}/global/health`);
       if (response.ok) {
         ready = true;
         break;
@@ -312,10 +313,10 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, _args: s
   console.log(`Server ready. Launching Nightshift TUI...`);
 
   // Import and launch the nightshift TUI
-  const { attach } = await import("./cmd/tui/attach");
+  const { tui } = await import("./cli/cmd/tui/tui/app");
 
   try {
-    await attach({ url });
+    await tui({ url, args: {}, directory: process.cwd() });
   } finally {
     // Clean up server when TUI exits
     serverProc.kill();
@@ -385,10 +386,11 @@ yargs(process.argv.slice(2))
         }),
     async (argv) => {
       try {
-        const { attach } = await import("./cmd/tui/attach");
-        await attach({
+        const { tui } = await import("./cli/cmd/tui/tui/app");
+        await tui({
           url: argv.url!,
-          sessionID: argv.session,
+          args: { sessionID: argv.session },
+          directory: process.cwd(),
         });
       } catch (err) {
         console.error("Attach failed:", err);

@@ -1,13 +1,24 @@
 {
+  "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "types": ["bun-types"],
     "strict": true,
+    "noImplicitAny": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "customConditions": ["browser"],
+    "baseUrl": ".",
+    "paths": {
+      "@tui/*": ["./src/cli/cmd/tui/tui/*"],
+      "@/*": ["./src/cli/cmd/tui/lib/*"]
+    }
   },
   "include": ["src"]
 }
