@@ -1,5 +1,6 @@
 import { Prompt, type PromptRef } from "@tui/component/prompt"
-import { createMemo, Match, onMount, Show, Switch } from "solid-js"
+import { createMemo, createSignal, Match, onMount, Show, Switch } from "solid-js"
+import { useTerminalDimensions } from "@opentui/solid"
 import { useTheme } from "@tui/context/theme"
 import { useKeybind } from "@tui/context/keybind"
 import { Logo } from "../component/logo"
@@ -77,6 +78,13 @@ export function Home() {
   let prompt: PromptRef
   const args = useArgs()
   onMount(() => {
+    const modes: Array<"scan" | "left" | "right" | "hidden"> = ["scan", "left", "right", "hidden"]
+    const selectedMode = modes[Math.floor(Math.random() * modes.length)] ?? "scan"
+    setLogoMode(selectedMode)
+    if (selectedMode === "left" || selectedMode === "right") {
+      const snarks = ["Yep. That again.", "I saw that.", "Try harder.", "Bold choice.", "Sure, why not.", "Make it make sense."]
+      setLogoSnark(snarks[Math.floor(Math.random() * snarks.length)] ?? snarks[0] ?? "...")
+    }
     if (once) return
     if (route.initialPrompt) {
       prompt.set(route.initialPrompt)
@@ -90,12 +98,21 @@ export function Home() {
   const directory = useDirectory()
 
   const keybind = useKeybind()
+  const dimensions = useTerminalDimensions()
+  const promptWidth = createMemo(() => {
+    const width = dimensions().width
+    return Math.max(0, Math.min(75, width - 4))
+  })
+  const [logoMode, setLogoMode] = createSignal<"scan" | "left" | "right" | "hidden">("scan")
+  const [logoSnark, setLogoSnark] = createSignal("...")
 
   return (
     <>
       <box flexGrow={1} justifyContent="center" alignItems="center" paddingLeft={2} paddingRight={2} gap={1}>
         <box height={3} />
-        <Logo />
+        <box width="100%" maxWidth={75} alignItems="flex-start">
+          <Logo width={promptWidth()} mode={logoMode()} snark={logoSnark()} />
+        </box>
         <box width="100%" maxWidth={75} zIndex={1000} paddingTop={1}>
           <Prompt
             ref={(r) => {

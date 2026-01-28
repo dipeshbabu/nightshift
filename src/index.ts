@@ -248,7 +248,6 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
   }
 
   const PATH = `${venvBin}:${binDir}:${process.env.PATH ?? ""}`;
-
   if (useNightshiftTui) {
     // Start opencode as a server and attach nightshift TUI
     await runWithNightshiftTui(opencode, PATH, args);

@@ -1,90 +1,103 @@
+import { isDeepEqual } from "remeda"
 import type { ParsedKey } from "@opentui/core"
 
 export namespace Keybind {
-  export interface Info {
-    name: string
-    ctrl?: boolean
-    meta?: boolean
-    shift?: boolean
-    super?: boolean
-    leader?: boolean
+  /**
+   * Keybind info derived from OpenTUI's ParsedKey with our custom `leader` field.
+   * This ensures type compatibility and catches missing fields at compile time.
+   */
+  export type Info = Pick<ParsedKey, "name" | "ctrl" | "meta" | "shift" | "super"> & {
+    leader: boolean // our custom field
   }
 
-  export function parse(input: string | string[] | undefined): Info[] {
-    if (!input) return []
-    const inputs = Array.isArray(input) ? input : [input]
-    return inputs.map(parseSingle)
+  export function match(a: Info | undefined, b: Info): boolean {
+    if (!a) return false
+    const normalizedA = { ...a, super: a.super ?? false }
+    const normalizedB = { ...b, super: b.super ?? false }
+    return isDeepEqual(normalizedA, normalizedB)
   }
 
-  function parseSingle(input: string): Info {
-    const parts = input.toLowerCase().split("+")
-    const result: Info = { name: "" }
+  /**
+   * Convert OpenTUI's ParsedKey to our Keybind.Info format.
+   * This helper ensures all required fields are present and avoids manual object creation.
+   */
+  export function fromParsedKey(key: ParsedKey, leader = false): Info {
+    return {
+      name: key.name,
+      ctrl: key.ctrl,
+      meta: key.meta,
+      shift: key.shift,
+      super: key.super ?? false,
+      leader,
+    }
+  }
 
-    for (const part of parts) {
-      switch (part) {
-        case "ctrl":
-        case "control":
-          result.ctrl = true
-          break
-        case "meta":
-        case "alt":
-        case "option":
-          result.meta = true
-          break
-        case "shift":
-          result.shift = true
-          break
-        case "super":
-        case "cmd":
-        case "command":
-          result.super = true
-          break
-        case "<leader>":
-        case "leader":
-          result.leader = true
-          break
-        default:
-          result.name = part
-      }
+  export function toString(info: Info | undefined): string {
+    if (!info) return ""
+    const parts: string[] = []
+
+    if (info.ctrl) parts.push("ctrl")
+    if (info.meta) parts.push("alt")
+    if (info.super) parts.push("super")
+    if (info.shift) parts.push("shift")
+    if (info.name) {
+      if (info.name === "delete") parts.push("del")
+      else parts.push(info.name)
+    }
+
+    let result = parts.join("+")
+
+    if (info.leader) {
+      result = result ? `<leader> ${result}` : `<leader>`
     }
 
     return result
   }
 
-  export function fromParsedKey(evt: ParsedKey, leader: boolean): Info {
-    return {
-      name: evt.name ?? "",
-      ctrl: evt.ctrl,
-      meta: evt.meta,
-      shift: evt.shift,
-      super: evt.super,
-      leader,
-    }
-  }
+  export function parse(key: string): Info[] {
+    if (key === "none") return []
 
-  export function match(keybind: Info, evt: Info): boolean {
-    return (
-      keybind.name.toLowerCase() === evt.name.toLowerCase() &&
-      !!keybind.ctrl === !!evt.ctrl &&
-      !!keybind.meta === !!evt.meta &&
-      !!keybind.shift === !!evt.shift &&
-      !!keybind.super === !!evt.super &&
-      !!keybind.leader === !!evt.leader
-    )
-  }
+    return key.split(",").map((combo) => {
+      // Handle <leader> syntax by replacing with leader+
+      const normalized = combo.replace(/<leader>/g, "leader+")
+      const parts = normalized.toLowerCase().split("+")
+      const info: Info = {
+        ctrl: false,
+        meta: false,
+        shift: false,
+        leader: false,
+        name: "",
+      }
 
-  export function toString(info: Info): string {
-    const parts: string[] = []
-    if (info.leader) parts.push("<leader>")
-    if (info.ctrl) parts.push("ctrl")
-    if (info.meta) parts.push("alt")
-    if (info.shift) parts.push("shift")
-    if (info.super) parts.push("cmd")
-    if (info.name) parts.push(info.name)
-    return parts.join("+")
-  }
+      for (const part of parts) {
+        switch (part) {
+          case "ctrl":
+            info.ctrl = true
+            break
+          case "alt":
+          case "meta":
+          case "option":
+            info.meta = true
+            break
+          case "super":
+            info.super = true
+            break
+          case "shift":
+            info.shift = true
+            break
+          case "leader":
+            info.leader = true
+            break
+          case "esc":
+            info.name = "escape"
+            break
+          default:
+            info.name = part
+            break
+        }
+      }
 
-  export function format(info: Info): string {
-    return toString(info)
+      return info
+    })
   }
 }

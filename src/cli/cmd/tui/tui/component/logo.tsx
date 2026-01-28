@@ -1,90 +1,143 @@
-import { TextAttributes, RGBA } from "@opentui/core"
-import { For, Show, type JSX } from "solid-js"
-import { useTheme, tint } from "@tui/context/theme"
-import { useSync } from "@tui/context/sync"
+import { RGBA } from "@opentui/core"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { useTheme } from "@tui/context/theme"
 
-// Shadow markers (rendered chars in parens):
-// _ = full shadow cell (space with bg=shadow)
-// ^ = letter top, shadow bottom (▀ with fg=letter, bg=shadow)
-// ~ = shadow top only (▀ with fg=shadow)
-const SHADOW_MARKER = /[_^~]/
+const BIRD_PIXELS = [
+  "....GGGGGG....",
+  "...GHHHHHHG...",
+  "..GHHLLLLHHG..",
+  ".GHLKLLLKLHG..",
+  ".GHHLLLOLLHHG.",
+  ".GHHLLWOWLHHG.",
+  ".GHHLLLLLLHHG.",
+  "..GGYYYYYYGG..",
+  "...GGYYYYGG...",
+  "...DD....DD...",
+]
 
-const LOGO_LEFT = [`                   `, `█▀▀█ █▀▀█ █▀▀█ █▀▀▄`, `█__█ █__█ █^^^ █__█`, `▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀~~▀`]
+const BIRD_COLORS: Record<string, RGBA> = {
+  G: RGBA.fromHex("#7aa51a"),
+  H: RGBA.fromHex("#92c137"),
+  D: RGBA.fromHex("#5a8a0a"),
+  L: RGBA.fromHex("#f7f37b"),
+  Y: RGBA.fromHex("#d6d100"),
+  K: RGBA.fromHex("#111111"),
+  O: RGBA.fromHex("#f6a11a"),
+  W: RGBA.fromHex("#f7f4ea"),
+}
 
-const LOGO_RIGHT = [`             ▄     `, `█▀▀▀ █▀▀█ █▀▀█ █▀▀█`, `█___ █__█ █__█ █^^^`, `▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀`]
+type LogoProps = {
+  width?: number
+  mode?: "scan" | "left" | "right" | "hidden"
+  snark?: string
+}
 
-export function Logo() {
+export function Logo(props: LogoProps) {
+  const [frame, setFrame] = createSignal(0)
   const { theme } = useTheme()
-  const sync = useSync()
+  const birdWidth = BIRD_PIXELS[0]?.length ?? 0
+  const holdStart = 30
+  const holdEnd = 9
 
-  const renderLine = (line: string, fg: RGBA, bold: boolean): JSX.Element[] => {
-    const shadow = tint(theme.background, fg, 0.25)
-    const attrs = bold ? TextAttributes.BOLD : undefined
-    const elements: JSX.Element[] = []
-    let i = 0
+  const mode = createMemo(() => props.mode ?? "scan")
+  const bubbleEnabled = createMemo(() => mode() === "left" || mode() === "right")
+  const maxBubbleWidth = createMemo(() => {
+    const width = props.width ?? birdWidth
+    return Math.max(0, width - birdWidth - 2)
+  })
+  const bubbleWidth = createMemo(() => {
+    if (!bubbleEnabled()) return 0
+    return Math.max(0, Math.min(22, maxBubbleWidth()))
+  })
+  const showBubble = createMemo(() => bubbleWidth() >= 8)
+  const bubbleGap = createMemo(() => (showBubble() ? 2 : 0))
+  const contentWidth = createMemo(() => {
+    return birdWidth + (showBubble() ? bubbleWidth() + bubbleGap() : 0)
+  })
 
-    while (i < line.length) {
-      const rest = line.slice(i)
-      const markerIndex = rest.search(SHADOW_MARKER)
+  const travelWidth = createMemo(() => {
+    const width = props.width ?? birdWidth
+    return Math.max(1, width - contentWidth() + 1)
+  })
 
-      if (markerIndex === -1) {
-        elements.push(
-          <text fg={fg} attributes={attrs} selectable={false}>
-            {rest}
-          </text>,
-        )
-        break
-      }
+  const totalFrames = createMemo(() => {
+    const width = travelWidth()
+    return width + holdEnd + (width - 1) + holdStart
+  })
 
-      if (markerIndex > 0) {
-        elements.push(
-          <text fg={fg} attributes={attrs} selectable={false}>
-            {rest.slice(0, markerIndex)}
-          </text>,
-        )
-      }
-
-      const marker = rest[markerIndex]
-      switch (marker) {
-        case "_":
-          elements.push(
-            <text fg={fg} bg={shadow} attributes={attrs} selectable={false}>
-              {" "}
-            </text>,
-          )
-          break
-        case "^":
-          elements.push(
-            <text fg={fg} bg={shadow} attributes={attrs} selectable={false}>
-              ▀
-            </text>,
-          )
-          break
-        case "~":
-          elements.push(
-            <text fg={shadow} attributes={attrs} selectable={false}>
-              ▀
-            </text>,
-          )
-          break
-      }
-
-      i += markerIndex + 1
+  const offset = createMemo(() => {
+    const width = travelWidth()
+    if (width <= 1) return 0
+    if (mode() === "left") return 0
+    if (mode() === "right") return width - 1
+    const total = totalFrames()
+    const current = total > 0 ? frame() % total : 0
+    if (current < width) return current
+    if (current < width + holdEnd) return width - 1
+    if (current < width + holdEnd + (width - 1)) {
+      const backwardIndex = current - width - holdEnd
+      return width - 2 - backwardIndex
     }
+    return 0
+  })
 
-    return elements
-  }
+  createEffect(() => {
+    const total = totalFrames()
+    if (mode() !== "scan" || total <= 1) return
+    const interval = setInterval(() => {
+      setFrame((current) => (current + 1) % total)
+    }, 90)
 
-  return (
-    <box>
-      <For each={LOGO_LEFT}>
-        {(line, index) => (
-          <box flexDirection="row" gap={1}>
-            <box flexDirection="row">{renderLine(line, theme.textMuted, false)}</box>
-            <box flexDirection="row">{renderLine(LOGO_RIGHT[index()], theme.text, true)}</box>
+    onCleanup(() => clearInterval(interval))
+  })
+
+
+  if (mode() === "hidden") return null
+
+  const Bird = (
+    <box flexDirection="column">
+      <For each={BIRD_PIXELS}>
+        {(row) => (
+          <box flexDirection="row" gap={0}>
+            <For each={row.split("")}>
+              {(cell) => {
+                if (cell === ".") {
+                  return <text selectable={false}>{" "}</text>
+                }
+                const fg = BIRD_COLORS[cell]
+                return (
+                  <text fg={fg} selectable={false}>
+                    █
+                  </text>
+                )
+              }}
+            </For>
           </box>
         )}
       </For>
+    </box>
+  )
+
+  const Bubble = (
+    <box
+      width={bubbleWidth()}
+      paddingLeft={1}
+      paddingRight={1}
+      backgroundColor={theme.backgroundPanel}
+      border={["top", "bottom", "left", "right"]}
+      borderColor={theme.border}
+    >
+      <text fg={theme.text} wrapMode="word" width="100%" selectable={false}>
+        {props.snark ?? "..."}
+      </text>
+    </box>
+  )
+
+  return (
+    <box flexDirection="row" alignItems="center" gap={bubbleGap()} marginLeft={offset()}>
+      <Show when={mode() === "right" && showBubble()}>{Bubble}</Show>
+      {Bird}
+      <Show when={mode() === "left" && showBubble()}>{Bubble}</Show>
     </box>
   )
 }
