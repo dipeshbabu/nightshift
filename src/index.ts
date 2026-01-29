@@ -1,5 +1,6 @@
 import yargs from "yargs";
 import { resolve, join, relative, dirname } from "path";
+import { homedir } from "os";
 import { mkdirSync, symlinkSync, existsSync, chmodSync } from "fs";
 
 const OPENCODE_VERSION = "v1.1.37"
@@ -15,10 +16,62 @@ interface Platform {
   arch: "x86_64" | "aarch64";
 }
 
+interface NightshiftConfig {
+  activePrefix?: string;
+  prefix?: string;
+}
+
 function detectPlatform(): Platform {
   const os = process.platform === "darwin" ? "darwin" : "linux";
   const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
   return { os, arch };
+}
+
+function configSearchPaths(cwd: string): string[] {
+  const paths = [join(cwd, "nightshift.json")];
+  const home = homedir();
+  if (home) {
+    paths.push(join(home, ".config", "nightshift", "nightshift.json"));
+  }
+  return paths;
+}
+
+function expandHome(input: string): string {
+  if (!input.startsWith("~")) return input;
+  const home = homedir();
+  if (!home) return input;
+  if (input === "~") return home;
+  if (input.startsWith("~/")) return join(home, input.slice(2));
+  return input;
+}
+
+async function readConfigFile(path: string): Promise<NightshiftConfig | null> {
+  const file = Bun.file(path);
+  if (!(await file.exists())) return null;
+  const text = await file.text();
+  try {
+    return JSON.parse(text) as NightshiftConfig;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to parse nightshift.json at ${path}: ${message}`);
+  }
+}
+
+async function resolvePrefixFromConfig(cwd: string): Promise<{ prefix: string; source: string }> {
+  for (const configPath of configSearchPaths(cwd)) {
+    const config = await readConfigFile(configPath);
+    if (!config) continue;
+    const prefix = config.activePrefix ?? config.prefix;
+    if (!prefix) {
+      throw new Error(
+        `nightshift.json at ${configPath} must include "activePrefix" (or "prefix").`,
+      );
+    }
+    return { prefix: expandHome(prefix), source: configPath };
+  }
+
+  const locations = configSearchPaths(cwd).join(", ");
+  throw new Error(`No nightshift.json found. Looked in: ${locations}`);
 }
 
 
@@ -323,81 +376,118 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, _args: s
 }
 
 
-yargs(process.argv.slice(2))
-  .command(
-    "install",
-    "Install opencode + tools into a prefix",
-    (y) =>
-      y.option("prefix", {
-        type: "string",
-        demandOption: true,
-        describe: "Directory to install tools into",
-      }),
-    async (argv) => {
-      try {
-        await install(argv.prefix);
-      } catch (err) {
-        console.error("Install failed:", err);
-        process.exit(1);
-      }
-    },
-  )
-  .command(
-    "run",
-    "Launch opencode with isolated env",
-    (y) =>
-      y
-        .option("prefix", {
+export {
+  detectPlatform,
+  configSearchPaths,
+  expandHome,
+  resolvePrefixFromConfig,
+  opencodeUrl,
+  pythonUrl,
+  uvUrl,
+  ripgrepUrl,
+};
+
+if (import.meta.main) {
+  yargs(process.argv.slice(2))
+    .command(
+      "install",
+      "Install opencode + tools into a prefix",
+      (y) =>
+        y.option("prefix", {
           type: "string",
           demandOption: true,
-          describe: "Prefix where tools are installed",
-        })
-        .option("run-nightshift-tui", {
-          type: "boolean",
-          default: false,
-          describe: "Use Nightshift TUI instead of default opencode",
+          describe: "Directory to install tools into",
         }),
-    async (argv) => {
-      try {
-        const dashIdx = process.argv.indexOf("--");
-        const extra = dashIdx >= 0 ? process.argv.slice(dashIdx + 1) : [];
-        await run(argv.prefix, extra, argv["run-nightshift-tui"]);
-      } catch (err) {
-        console.error("Run failed:", err);
-        process.exit(1);
-      }
-    },
-  )
-  .command(
-    "attach <url>",
-    "Attach to a running opencode server",
-    (y) =>
-      y
-        .positional("url", {
-          type: "string",
-          demandOption: true,
-          describe: "URL of the opencode server (e.g., http://localhost:4096)",
-        })
-        .option("session", {
-          alias: "s",
-          type: "string",
-          describe: "Session ID to continue",
-        }),
-    async (argv) => {
-      try {
-        const { tui } = await import("./cli/cmd/tui/tui/app");
-        await tui({
-          url: argv.url!,
-          args: { sessionID: argv.session },
-          directory: process.cwd(),
-        });
-      } catch (err) {
-        console.error("Attach failed:", err);
-        process.exit(1);
-      }
-    },
-  )
-  .demandCommand(1, "Please specify a command: install, run, or attach")
-  .strict()
-  .help()
-  .parse();
+      async (argv) => {
+        try {
+          await install(argv.prefix);
+        } catch (err) {
+          console.error("Install failed:", err);
+          process.exit(1);
+        }
+      },
+    )
+    .command(
+      "run",
+      "Launch opencode with isolated env",
+      (y) =>
+        y
+          .option("prefix", {
+            type: "string",
+            describe: "Prefix where tools are installed (defaults to nightshift.json)",
+          })
+          .option("run-nightshift-tui", {
+            type: "boolean",
+            default: false,
+            describe: "Use Nightshift TUI instead of default opencode",
+          }),
+      async (argv) => {
+        try {
+          const dashIdx = process.argv.indexOf("--");
+          const extra = dashIdx >= 0 ? process.argv.slice(dashIdx + 1) : [];
+          const useNightshiftTui = Boolean(argv["run-nightshift-tui"]);
+          if (argv.prefix) {
+            await run(argv.prefix, extra, useNightshiftTui);
+            return;
+          }
+
+          const resolved = await resolvePrefixFromConfig(process.cwd());
+          console.log(`Using prefix from ${resolved.source}`);
+          await run(resolved.prefix, extra, useNightshiftTui);
+        } catch (err) {
+          console.error("Run failed:", err);
+          process.exit(1);
+        }
+      },
+    )
+    .command(
+      "$0",
+      "Launch opencode using nightshift.json",
+      (y) => y,
+      async () => {
+        try {
+          const dashIdx = process.argv.indexOf("--");
+          const extra = dashIdx >= 0 ? process.argv.slice(dashIdx + 1) : [];
+          const resolved = await resolvePrefixFromConfig(process.cwd());
+          console.log(`Using prefix from ${resolved.source}`);
+          await run(resolved.prefix, extra, false);
+        } catch (err) {
+          console.error("Run failed:", err);
+          process.exit(1);
+        }
+      },
+    )
+    .command(
+      "attach <url>",
+      "Attach to a running opencode server",
+      (y) =>
+        y
+          .positional("url", {
+            type: "string",
+            demandOption: true,
+            describe: "URL of the opencode server (e.g., http://localhost:4096)",
+          })
+          .option("session", {
+            alias: "s",
+            type: "string",
+            describe: "Session ID to continue",
+          }),
+      async (argv) => {
+        try {
+          const { tui } = await import("./cli/cmd/tui/tui/app");
+          await tui({
+            url: argv.url!,
+            args: { sessionID: argv.session },
+            directory: process.cwd(),
+          });
+        } catch (err) {
+          console.error("Attach failed:", err);
+          process.exit(1);
+        }
+      },
+    )
+    .demandCommand(1, "Please specify a command: install, run, or attach")
+    .strict()
+    .help()
+    .parse();
+}
