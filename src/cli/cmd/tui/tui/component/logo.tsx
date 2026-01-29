@@ -47,9 +47,9 @@ export function Logo(props: LogoProps) {
   })
   const bubbleWidth = createMemo(() => {
     if (!bubbleEnabled()) return 0
-    return Math.max(0, Math.min(22, maxBubbleWidth()))
+    return Math.max(8, Math.min(22, maxBubbleWidth()))
   })
-  const showBubble = createMemo(() => bubbleWidth() >= 8)
+  const showBubble = createMemo(() => bubbleEnabled())
   const bubbleGap = createMemo(() => (showBubble() ? 2 : 0))
   const contentWidth = createMemo(() => {
     return birdWidth + (showBubble() ? bubbleWidth() + bubbleGap() : 0)

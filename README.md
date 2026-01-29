@@ -39,6 +39,12 @@ Install tools to a prefix and launch the TUI:
 ./dist/nightshift-<os>-<arch>/bin/nightshift run --prefix ~/.nightshift --run-nightshift-tui
 ```
 
+## Debugging with Bun
+
+```
+bun run --inspect-brk start run --prefix ~/.test --run-nightshift-tui
+```
+
 ## CLI usage
 
 Nightshift exposes three main commands:
