@@ -443,19 +443,25 @@ if (import.meta.main) {
     .command(
       "$0",
       "Launch opencode using nightshift.json",
-      (y) => y,
-      async () => {
+      (y) =>
+
+        y.option("run-nightshift-tui", {
+          type: "boolean",
+          default: false,
+          describe: "Use Nightshift TUI instead of default opencode",
+        }),
+      async (argv) => {
         try {
           const dashIdx = process.argv.indexOf("--");
           const extra = dashIdx >= 0 ? process.argv.slice(dashIdx + 1) : [];
           const resolved = await resolvePrefixFromConfig(process.cwd());
           console.log(`Using prefix from ${resolved.source}`);
-          await run(resolved.prefix, extra, false);
+          await run(resolved.prefix, extra, Boolean(argv["run-nightshift-tui"]));
         } catch (err) {
           console.error("Run failed:", err);
           process.exit(1);
         }
-      },
+      }
     )
     .command(
       "attach <url>",
