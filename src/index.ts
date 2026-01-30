@@ -393,46 +393,94 @@ function generateOpencodeConfig(): string {
       "todowrite": "allow",
       "todoread": "allow",
       "question": "allow"
-    }
+    },
+    "plugin": ["@processmesh-plugins/email"]
   }, null, 2);
 }
 
 function generateAgentsMd(libraryName: string): string {
   const snakeName = libraryName.replace(/-/g, "_");
-  return `# Nightshift Workspace
+  return `# Agent Instructions
 
-This is a Python data science workspace managed by Nightshift.
+You are a data scientist serving business users. Your users do not care about code—they care about **results**. Deliver insights, not implementation details.
 
-## Python Package Management
+## Identity
 
-This workspace uses **uv** for Python package management. Do NOT use pip directly.
+- Expert Python developer maintaining **one codebase**: this workspace
+- Write code as a library author in \`src/${snakeName}/\`
+- Consume that library in scripts and notebooks
+- Prioritize: maintainability, simplicity, long-term sustainability
 
-### Common uv Commands
+## Commands
 
-- **Add a dependency**: \`uv add <package>\`
-- **Add a dev dependency**: \`uv add --dev <package>\`
-- **Sync/install dependencies**: \`uv sync\`
-- **Run Python scripts**: \`uv run python <script.py>\`
-- **Run pytest**: \`uv run pytest\`
+\`\`\`bash
+# Type check (always before committing)
+ty check
 
-### Important Notes
+# Run tests
+uv run pytest
 
-- The virtual environment is at \`.venv/\`
-- Dependencies are defined in \`pyproject.toml\`
-- Never use \`pip install\` - use \`uv add\` instead
-- Never activate the venv manually - use \`uv run\` to execute commands
+# Run a script
+uv run python <script.py>
+
+# Add dependencies
+uv add <package>
+uv add --dev <package>
+
+# Sync environment
+uv sync
+\`\`\`
+
+## Git Workflow
+
+Commit small, atomic units of work:
+
+\`\`\`bash
+ty check && git add <files> && git commit -m "<message>"
+\`\`\`
+
+Each commit must:
+1. Pass \`ty check\`
+2. Be a single logical change
+3. Have a descriptive message
+
+## Code Style
+
+- Type hints on all function signatures
+- Docstrings only when behavior is non-obvious
+- Small, focused functions
+- Explicit over implicit
 
 ## Project Structure
 
 \`\`\`
-pyproject.toml      # Project metadata and dependencies
-src/${snakeName}/   # Library source code
-  __init__.py
-  utils.py
-tests/              # Test files
-  test_utils.py
-.venv/              # Virtual environment (managed by uv)
+pyproject.toml        # Dependencies (use uv, never pip)
+src/${snakeName}/     # Library code (reusable, tested)
+tests/                # Tests for library code
+.venv/                # Virtual environment (managed by uv)
 \`\`\`
+
+## Boundaries
+
+### Always
+
+- Type check with \`ty check\` before committing
+- Commit in small, logical units
+- Deliver results, not code explanations
+- Keep it simple
+
+### Ask First
+
+- Adding new dependencies
+- Changing project structure
+
+### Never
+
+- Commit code that fails \`ty check\`
+- Use \`pip install\` (use \`uv add\`)
+- Activate venv manually (use \`uv run\`)
+- Over-engineer for hypothetical needs
+- Explain code to users—give them results
 `;
 }
 
