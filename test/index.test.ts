@@ -10,6 +10,7 @@ import {
   extractExtraArgs,
   resolveRunOptions,
   buildAttachTuiArgs,
+  buildXdgEnv,
   readFullConfig,
   saveActivePrefix,
   generateRootPyproject,
@@ -235,7 +236,7 @@ test("generateAgentsMd includes uv instructions", () => {
   expect(agentsMd).toContain("uv sync");
   expect(agentsMd).toContain("uv run");
   expect(agentsMd).toContain("src/agent_lib");
-  expect(agentsMd).toContain("Do NOT use pip");
+  expect(agentsMd).toContain("never pip");
 });
 
 test("generateAgentsMd converts dashes to underscores in paths", () => {
@@ -253,4 +254,20 @@ test("generateOpencodeConfig returns valid JSON with expected permissions", () =
   expect(config.permission.write).toBe("allow");
   expect(config.permission.glob).toBe("allow");
   expect(config.permission.grep).toBe("ask");
+});
+
+test("buildXdgEnv returns correct XDG paths for prefix", () => {
+  const xdgEnv = buildXdgEnv("/home/user/.nightshift");
+  expect(xdgEnv.XDG_CONFIG_HOME).toBe("/home/user/.nightshift/config");
+  expect(xdgEnv.XDG_DATA_HOME).toBe("/home/user/.nightshift/share");
+  expect(xdgEnv.XDG_CACHE_HOME).toBe("/home/user/.nightshift/cache");
+  expect(xdgEnv.XDG_STATE_HOME).toBe("/home/user/.nightshift/state");
+});
+
+test("buildXdgEnv works with different prefix paths", () => {
+  const xdgEnv = buildXdgEnv("/tmp/test-nightshift");
+  expect(xdgEnv.XDG_CONFIG_HOME).toBe("/tmp/test-nightshift/config");
+  expect(xdgEnv.XDG_DATA_HOME).toBe("/tmp/test-nightshift/share");
+  expect(xdgEnv.XDG_CACHE_HOME).toBe("/tmp/test-nightshift/cache");
+  expect(xdgEnv.XDG_STATE_HOME).toBe("/tmp/test-nightshift/state");
 });

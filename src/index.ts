@@ -167,6 +167,15 @@ function buildAttachTuiArgs(url: string, session: string | undefined, directory:
   };
 }
 
+function buildXdgEnv(prefix: string): Record<string, string> {
+  return {
+    XDG_CONFIG_HOME: join(prefix, "config"),
+    XDG_DATA_HOME: join(prefix, "share"),
+    XDG_CACHE_HOME: join(prefix, "cache"),
+    XDG_STATE_HOME: join(prefix, "state"),
+  };
+}
+
 function pythonUrl(p: Platform): { url: string; extractedBinary: string } {
   const triple =
     p.os === "darwin"
@@ -592,6 +601,12 @@ async function install(prefix: string): Promise<void> {
     await syncWorkspace(prefix, workspacePath);
   }
 
+  // Create XDG directories for isolated opencode config/data/cache/state
+  const xdgDirs = ["config", "share", "cache", "state"];
+  for (const dir of xdgDirs) {
+    mkdirSync(join(prefix, dir), { recursive: true });
+  }
+
   // Save active prefix for future runs
   await saveActivePrefix(prefix);
 
@@ -631,9 +646,11 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
     ? `${workspaceSrc}:${process.env.PYTHONPATH ?? ""}`
     : process.env.PYTHONPATH ?? "";
 
+  const xdgEnv = buildXdgEnv(prefix);
+
   if (useNightshiftTui) {
     // Start opencode as a server and attach nightshift TUI
-    await runWithNightshiftTui(opencode, PATH, PYTHONPATH, workspacePath, args);
+    await runWithNightshiftTui(opencode, PATH, PYTHONPATH, workspacePath, args, xdgEnv);
   } else {
     // Standard opencode execution
     console.log(`Launching opencode with isolated PATH`);
@@ -649,6 +666,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
       stdin: "inherit",
       env: {
         ...process.env,
+        ...xdgEnv,
         PATH,
         PYTHONPATH,
         OPENCODE_EXPERIMENTAL_LSP_TY: "true",
@@ -660,7 +678,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
   }
 }
 
-async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPATH: string, workspacePath: string, _args: string[]): Promise<void> {
+async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPATH: string, workspacePath: string, _args: string[], xdgEnv: Record<string, string>): Promise<void> {
   // Find an available port
   const port = 4096 + Math.floor(Math.random() * 1000);
   const url = `http://127.0.0.1:${port}`;
@@ -674,6 +692,7 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPA
     stderr: "pipe",
     env: {
       ...process.env,
+      ...xdgEnv,
       PATH,
       PYTHONPATH,
       OPENCODE_EXPERIMENTAL_LSP_TY: "true",
@@ -729,6 +748,7 @@ export {
   extractExtraArgs,
   resolveRunOptions,
   buildAttachTuiArgs,
+  buildXdgEnv,
   generateRootPyproject,
   generateUtilsPy,
   generateTestUtilsPy,
