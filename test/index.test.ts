@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
+import { mkdtemp, rm } from "fs/promises";
 import {
   configSearchPaths,
   expandHome,
@@ -10,6 +11,7 @@ import {
   resolveRunOptions,
   buildAttachTuiArgs,
   readFullConfig,
+  saveActivePrefix,
   generateRootPyproject,
   generateUtilsPy,
   generateTestUtilsPy,
@@ -83,8 +85,99 @@ test("WORKSPACE_PACKAGES contains expected packages", () => {
 });
 
 test("readFullConfig returns null when no config exists", async () => {
-  const config = await readFullConfig("/nonexistent/path");
-  expect(config).toBeNull();
+  const tempHome = await mkdtemp(join(tmpdir(), "nightshift-test-"));
+  const originalHome = process.env.HOME;
+  process.env.HOME = tempHome;
+
+  try {
+    const config = await readFullConfig("/nonexistent/path");
+    expect(config).toBeNull();
+  } finally {
+    process.env.HOME = originalHome;
+    await rm(tempHome, { recursive: true });
+  }
+});
+
+test("saveActivePrefix writes to global config file", async () => {
+  const tempHome = await mkdtemp(join(tmpdir(), "nightshift-test-"));
+  const originalHome = process.env.HOME;
+  const originalCwd = process.cwd();
+  process.env.HOME = tempHome;
+  // Change to temp dir so no local config interferes
+  process.chdir(tempHome);
+
+  try {
+    await saveActivePrefix("/test/prefix");
+
+    const configPath = join(tempHome, ".config", "nightshift", "nightshift.json");
+    const config = JSON.parse(await Bun.file(configPath).text());
+    expect(config.activePrefix).toBe("/test/prefix");
+  } finally {
+    process.chdir(originalCwd);
+    process.env.HOME = originalHome;
+    await rm(tempHome, { recursive: true });
+  }
+});
+
+test("saveActivePrefix preserves existing config fields", async () => {
+  const tempHome = await mkdtemp(join(tmpdir(), "nightshift-test-"));
+  const originalHome = process.env.HOME;
+  const originalCwd = process.cwd();
+  process.env.HOME = tempHome;
+  // Change to temp dir so no local config interferes
+  process.chdir(tempHome);
+
+  try {
+    // Create existing config with other fields
+    const configDir = join(tempHome, ".config", "nightshift");
+    const configPath = join(configDir, "nightshift.json");
+    const { mkdirSync } = await import("fs");
+    mkdirSync(configDir, { recursive: true });
+    await Bun.write(configPath, JSON.stringify({ libraryName: "my-lib", workspacePath: "/some/path" }));
+
+    await saveActivePrefix("/new/prefix");
+
+    const config = JSON.parse(await Bun.file(configPath).text());
+    expect(config.activePrefix).toBe("/new/prefix");
+    expect(config.libraryName).toBe("my-lib");
+    expect(config.workspacePath).toBe("/some/path");
+  } finally {
+    process.chdir(originalCwd);
+    process.env.HOME = originalHome;
+    await rm(tempHome, { recursive: true });
+  }
+});
+
+test("saveActivePrefix updates local config when it exists", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "nightshift-test-"));
+  const tempHome = await mkdtemp(join(tmpdir(), "nightshift-test-home-"));
+  const originalHome = process.env.HOME;
+  const originalCwd = process.cwd();
+  process.env.HOME = tempHome;
+  process.chdir(tempDir);
+
+  try {
+    // Create local config
+    const localConfigPath = join(tempDir, "nightshift.json");
+    await Bun.write(localConfigPath, JSON.stringify({ activePrefix: "/old/prefix", libraryName: "local-lib" }));
+
+    await saveActivePrefix("/new/prefix");
+
+    // Local config should be updated
+    const localConfig = JSON.parse(await Bun.file(localConfigPath).text());
+    expect(localConfig.activePrefix).toBe("/new/prefix");
+    expect(localConfig.libraryName).toBe("local-lib");
+
+    // Global config should NOT exist (we didn't create it and saveActivePrefix should use local)
+    const globalConfigPath = join(tempHome, ".config", "nightshift", "nightshift.json");
+    const globalFile = Bun.file(globalConfigPath);
+    expect(await globalFile.exists()).toBe(false);
+  } finally {
+    process.chdir(originalCwd);
+    process.env.HOME = originalHome;
+    await rm(tempDir, { recursive: true });
+    await rm(tempHome, { recursive: true });
+  }
 });
 
 test("generateRootPyproject includes library name and dependencies", () => {

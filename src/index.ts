@@ -32,7 +32,8 @@ function detectPlatform(): Platform {
 
 function configSearchPaths(cwd: string): string[] {
   const paths = [join(cwd, "nightshift.json")];
-  const home = homedir();
+  // Use process.env.HOME first (allows testing), fallback to homedir()
+  const home = process.env.HOME || homedir();
   if (home) {
     paths.push(join(home, ".config", "nightshift", "nightshift.json"));
   }
@@ -83,6 +84,49 @@ async function readFullConfig(cwd: string): Promise<NightshiftConfig | null> {
     if (config) return config;
   }
   return null;
+}
+
+async function saveActivePrefix(prefix: string): Promise<void> {
+  // Use process.env.HOME first (allows testing), fallback to homedir()
+  const home = process.env.HOME || homedir();
+  if (!home) return;
+
+  // Check for local config first - if it exists, update it (since it takes precedence)
+  const localConfigPath = join(process.cwd(), "nightshift.json");
+  const localFile = Bun.file(localConfigPath);
+  if (await localFile.exists()) {
+    let localConfig: NightshiftConfig = {};
+    try {
+      localConfig = JSON.parse(await localFile.text());
+    } catch {
+      // Ignore parse errors, start fresh
+    }
+    localConfig.activePrefix = prefix;
+    await Bun.write(localConfigPath, JSON.stringify(localConfig, null, 2));
+    console.log(`  Saved active prefix to ${localConfigPath}`);
+    return;
+  }
+
+  // No local config, save to global config
+  const configDir = join(home, ".config", "nightshift");
+  const configPath = join(configDir, "nightshift.json");
+
+  mkdirSync(configDir, { recursive: true });
+
+  // Read existing config to preserve other fields
+  let config: NightshiftConfig = {};
+  const file = Bun.file(configPath);
+  if (await file.exists()) {
+    try {
+      config = JSON.parse(await file.text());
+    } catch {
+      // Ignore parse errors, start fresh
+    }
+  }
+
+  config.activePrefix = prefix;
+  await Bun.write(configPath, JSON.stringify(config, null, 2));
+  console.log(`  Saved active prefix to ${configPath}`);
 }
 
 
@@ -500,10 +544,13 @@ async function install(prefix: string): Promise<void> {
     await syncWorkspace(prefix, workspacePath);
   }
 
+  // Save active prefix for future runs
+  await saveActivePrefix(prefix);
+
   console.log("Installation complete!");
   console.log(`  Prefix: ${prefix}`);
   console.log(`  Workspace: ${workspacePath}`);
-  console.log(`  Run: bun ${__filename} run --prefix ${prefix}`);
+  console.log(`  Run: bun ${__filename} run`);
 }
 
 
@@ -626,6 +673,7 @@ export {
   expandHome,
   resolvePrefixFromConfig,
   readFullConfig,
+  saveActivePrefix,
   opencodeUrl,
   pythonUrl,
   uvUrl,
@@ -680,6 +728,7 @@ if (import.meta.main) {
         try {
           const { extra, useNightshiftTui } = resolveRunOptions(argv, process.argv);
           if (argv.prefix) {
+            await saveActivePrefix(argv.prefix);
             await run(argv.prefix, extra, useNightshiftTui);
             return;
           }
