@@ -28,8 +28,7 @@ const BIRD_COLORS: Record<string, RGBA> = {
 
 type LogoProps = {
   width?: number
-  mode?: "scan" | "left" | "right" | "hidden"
-  snark?: string
+  mode?: "scan" | "left" | "right"
 }
 
 export function Logo(props: LogoProps) {
@@ -40,19 +39,11 @@ export function Logo(props: LogoProps) {
   const holdEnd = 9
 
   const mode = createMemo(() => props.mode ?? "scan")
-  const bubbleEnabled = createMemo(() => mode() === "left" || mode() === "right")
-  const maxBubbleWidth = createMemo(() => {
-    const width = props.width ?? birdWidth
-    return Math.max(0, width - birdWidth - 2)
-  })
-  const bubbleWidth = createMemo(() => {
-    if (!bubbleEnabled()) return 0
-    return Math.max(8, Math.min(22, maxBubbleWidth()))
-  })
-  const showBubble = createMemo(() => bubbleEnabled())
-  const bubbleGap = createMemo(() => (showBubble() ? 2 : 0))
+  const titleEnabled = createMemo(() => mode() === "left" || mode() === "right")
+  const titleWidth = "Nightshift".length
+  const titleGap = createMemo(() => (titleEnabled() ? 2 : 0))
   const contentWidth = createMemo(() => {
-    return birdWidth + (showBubble() ? bubbleWidth() + bubbleGap() : 0)
+    return birdWidth + (titleEnabled() ? titleWidth + titleGap() : 0)
   })
 
   const travelWidth = createMemo(() => {
@@ -92,8 +83,6 @@ export function Logo(props: LogoProps) {
   })
 
 
-  if (mode() === "hidden") return null
-
   const Bird = (
     <box flexDirection="column">
       <For each={BIRD_PIXELS}>
@@ -118,26 +107,17 @@ export function Logo(props: LogoProps) {
     </box>
   )
 
-  const Bubble = (
-    <box
-      width={bubbleWidth()}
-      paddingLeft={1}
-      paddingRight={1}
-      backgroundColor={theme.backgroundPanel}
-      border={["top", "bottom", "left", "right"]}
-      borderColor={theme.border}
-    >
-      <text fg={theme.text} wrapMode="word" width="100%" selectable={false}>
-        {props.snark ?? "..."}
-      </text>
-    </box>
+  const Title = (
+    <text fg={theme.text} selectable={false}>
+      Nightshift
+    </text>
   )
 
   return (
-    <box flexDirection="row" alignItems="center" gap={bubbleGap()} marginLeft={offset()}>
-      <Show when={mode() === "right" && showBubble()}>{Bubble}</Show>
+    <box flexDirection="row" alignItems="center" gap={titleGap()} marginLeft={offset()}>
+      <Show when={mode() === "right" && titleEnabled()}>{Title}</Show>
       {Bird}
-      <Show when={mode() === "left" && showBubble()}>{Bubble}</Show>
+      <Show when={mode() === "left" && titleEnabled()}>{Title}</Show>
     </box>
   )
 }
