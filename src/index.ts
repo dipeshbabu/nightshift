@@ -10,6 +10,7 @@ const UV_VERSION = "0.9.27";
 const RIPGREP_VERSION = "15.1.0";
 
 const DATA_SCIENCE_PACKAGES = ["numpy", "pandas"];
+const WORKSPACE_PACKAGES = ["numpy", "pandas", "matplotlib", "scikit-learn", "jupyter"];
 
 interface Platform {
   os: "darwin" | "linux";
@@ -19,6 +20,9 @@ interface Platform {
 interface NightshiftConfig {
   activePrefix?: string;
   prefix?: string;
+  workspacePath?: string;
+  libraryName?: string;
+  workspacePackages?: string[];
 }
 
 function detectPlatform(): Platform {
@@ -72,6 +76,14 @@ async function resolvePrefixFromConfig(cwd: string): Promise<{ prefix: string; s
 
   const locations = configSearchPaths(cwd).join(", ");
   throw new Error(`No nightshift.json found. Looked in: ${locations}`);
+}
+
+async function readFullConfig(cwd: string): Promise<NightshiftConfig | null> {
+  for (const configPath of configSearchPaths(cwd)) {
+    const config = await readConfigFile(configPath);
+    if (config) return config;
+  }
+  return null;
 }
 
 
@@ -280,6 +292,145 @@ async function installPackages(prefix: string, packages: string[]): Promise<void
 }
 
 
+function generateRootPyproject(libraryName: string, packages: string[]): string {
+  const depsStr = packages.map((p) => `    "${p}",`).join("\n");
+  const snakeName = libraryName.replace(/-/g, "_");
+  return `[project]
+name = "${libraryName}"
+version = "0.1.0"
+description = "Agent-maintained Python library"
+requires-python = ">=3.11"
+dependencies = [
+${depsStr}
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/${snakeName}"]
+
+[tool.uv]
+dev-dependencies = ["pytest>=8.0.0"]
+`;
+}
+
+function generateUtilsPy(libraryName: string): string {
+  return `"""Utility functions for ${libraryName}."""
+import numpy as np
+import pandas as pd
+
+
+def hello() -> str:
+    return "Hello from ${libraryName}!"
+
+
+def create_sample_dataframe() -> pd.DataFrame:
+    return pd.DataFrame({"x": np.arange(10), "y": np.random.randn(10)})
+`;
+}
+
+function generateTestUtilsPy(libraryName: string): string {
+  const snakeName = libraryName.replace(/-/g, "_");
+  return `from ${snakeName}.utils import hello, create_sample_dataframe
+
+
+def test_hello():
+    assert hello() == "Hello from ${libraryName}!"
+
+
+def test_create_sample_dataframe():
+    df = create_sample_dataframe()
+    assert len(df) == 10
+`;
+}
+
+function generateReadme(libraryName: string): string {
+  return `# ${libraryName}
+
+Agent-maintained Python library for data science workflows.
+
+## Usage
+
+\`\`\`python
+from ${libraryName.replace(/-/g, "_")}.utils import hello, create_sample_dataframe
+
+print(hello())
+df = create_sample_dataframe()
+\`\`\`
+
+## Running Tests
+
+\`\`\`bash
+pytest
+\`\`\`
+`;
+}
+
+async function createWorkspaceScaffold(
+  workspacePath: string,
+  libraryName: string,
+  packages: string[],
+): Promise<void> {
+  console.log(`\nCreating workspace scaffold at ${workspacePath}...`);
+  const snakeName = libraryName.replace(/-/g, "_");
+  const srcDir = join(workspacePath, "src", snakeName);
+  const testsDir = join(workspacePath, "tests");
+
+  mkdirSync(srcDir, { recursive: true });
+  mkdirSync(testsDir, { recursive: true });
+
+  await Bun.write(join(workspacePath, "pyproject.toml"), generateRootPyproject(libraryName, packages));
+  await Bun.write(join(srcDir, "__init__.py"), `"""${libraryName} package."""\n`);
+  await Bun.write(join(srcDir, "utils.py"), generateUtilsPy(libraryName));
+  await Bun.write(join(testsDir, "__init__.py"), "");
+  await Bun.write(join(testsDir, "test_utils.py"), generateTestUtilsPy(libraryName));
+  await Bun.write(join(workspacePath, "README.md"), generateReadme(libraryName));
+
+  console.log(`  Created workspace scaffold with library "${libraryName}"`);
+}
+
+async function syncWorkspace(prefix: string, workspacePath: string): Promise<void> {
+  console.log(`\nSyncing workspace dependencies...`);
+  const uv = join(prefix, "bin", "uv");
+
+  const proc = Bun.spawn([uv, "sync"], {
+    cwd: workspacePath,
+    stdout: "inherit",
+    stderr: "inherit",
+    env: {
+      ...process.env,
+      PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
+    },
+  });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) throw new Error(`Workspace sync failed (${exitCode})`);
+  console.log("  Workspace synced successfully.");
+}
+
+async function installUvTools(prefix: string): Promise<void> {
+  console.log(`\nInstalling uv tools...`);
+  const uv = join(prefix, "bin", "uv");
+  const toolDir = join(prefix, "uv-tools");
+  const toolBinDir = join(prefix, "uv-tools", "bin");
+
+  const proc = Bun.spawn([uv, "tool", "install", "ty"], {
+    stdout: "inherit",
+    stderr: "inherit",
+    env: {
+      ...process.env,
+      PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
+      UV_TOOL_DIR: toolDir,
+      UV_TOOL_BIN_DIR: toolBinDir,
+    },
+  });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) throw new Error(`uv tool install failed (${exitCode})`);
+  console.log("  ty installed successfully.");
+}
+
+
 async function install(prefix: string): Promise<void> {
   prefix = resolve(prefix);
   console.log(`Installing nightshift tools to ${prefix}`);
@@ -310,9 +461,24 @@ async function install(prefix: string): Promise<void> {
 
   await createVenv(prefix);
   await installPackages(prefix, DATA_SCIENCE_PACKAGES);
+  await installUvTools(prefix);
+
+  // Create workspace scaffold
+  const config = await readFullConfig(process.cwd());
+  const workspacePath = config?.workspacePath
+    ? resolve(expandHome(config.workspacePath))
+    : join(prefix, "workspace");
+  const libraryName = config?.libraryName ?? "agent_lib";
+  const packages = config?.workspacePackages ?? WORKSPACE_PACKAGES;
+
+  if (!existsSync(workspacePath)) {
+    await createWorkspaceScaffold(workspacePath, libraryName, packages);
+    await syncWorkspace(prefix, workspacePath);
+  }
 
   console.log("Installation complete!");
   console.log(`  Prefix: ${prefix}`);
+  console.log(`  Workspace: ${workspacePath}`);
   console.log(`  Run: bun ${__filename} run --prefix ${prefix}`);
 }
 
@@ -321,20 +487,42 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
   prefix = resolve(prefix);
   const binDir = join(prefix, "bin");
   const venvBin = join(prefix, "venvs", "data-science", "bin");
+  const uvToolsBin = join(prefix, "uv-tools", "bin");
   const opencode = join(binDir, "opencode");
 
   if (!existsSync(opencode)) {
     throw new Error(`opencode not found at ${opencode}. Run install first.`);
   }
 
-  const PATH = `${venvBin}:${binDir}:${process.env.PATH ?? ""}`;
+  // Compute workspace paths
+  const config = await readFullConfig(process.cwd());
+  const workspacePath = config?.workspacePath
+    ? resolve(expandHome(config.workspacePath))
+    : join(prefix, "workspace");
+  const workspaceVenvBin = join(workspacePath, ".venv", "bin");
+
+  // Build PATH with workspace venv and uv tools if they exist
+  let pathParts = [venvBin, binDir];
+  if (existsSync(workspaceVenvBin)) pathParts.unshift(workspaceVenvBin);
+  if (existsSync(uvToolsBin)) pathParts.unshift(uvToolsBin);
+  const PATH = `${pathParts.join(":")}:${process.env.PATH ?? ""}`;
+
+  // Add workspace src to PYTHONPATH
+  const workspaceSrc = join(workspacePath, "src");
+  const PYTHONPATH = existsSync(workspaceSrc)
+    ? `${workspaceSrc}:${process.env.PYTHONPATH ?? ""}`
+    : process.env.PYTHONPATH ?? "";
+
   if (useNightshiftTui) {
     // Start opencode as a server and attach nightshift TUI
-    await runWithNightshiftTui(opencode, PATH, args);
+    await runWithNightshiftTui(opencode, PATH, PYTHONPATH, args);
   } else {
     // Standard opencode execution
     console.log(`Launching opencode with isolated PATH`);
-    console.log(`  PATH prefix: ${venvBin}:${binDir}`);
+    console.log(`  PATH prefix: ${pathParts.join(":")}`);
+    if (existsSync(workspaceSrc)) {
+      console.log(`  PYTHONPATH includes: ${workspaceSrc}`);
+    }
 
     const proc = Bun.spawn([opencode, ...args], {
       stdout: "inherit",
@@ -343,6 +531,8 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
       env: {
         ...process.env,
         PATH,
+        PYTHONPATH,
+        OPENCODE_EXPERIMENTAL_LSP_TY: "true",
       },
     });
 
@@ -351,7 +541,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
   }
 }
 
-async function runWithNightshiftTui(opencodePath: string, PATH: string, _args: string[]): Promise<void> {
+async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPATH: string, _args: string[]): Promise<void> {
   // Find an available port
   const port = 4096 + Math.floor(Math.random() * 1000);
   const url = `http://127.0.0.1:${port}`;
@@ -365,6 +555,8 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, _args: s
     env: {
       ...process.env,
       PATH,
+      PYTHONPATH,
+      OPENCODE_EXPERIMENTAL_LSP_TY: "true",
     },
   });
 
@@ -408,6 +600,7 @@ export {
   configSearchPaths,
   expandHome,
   resolvePrefixFromConfig,
+  readFullConfig,
   opencodeUrl,
   pythonUrl,
   uvUrl,
@@ -415,6 +608,11 @@ export {
   extractExtraArgs,
   resolveRunOptions,
   buildAttachTuiArgs,
+  generateRootPyproject,
+  generateUtilsPy,
+  generateTestUtilsPy,
+  generateReadme,
+  WORKSPACE_PACKAGES,
 };
 
 if (import.meta.main) {

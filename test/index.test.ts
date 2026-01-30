@@ -9,6 +9,12 @@ import {
   extractExtraArgs,
   resolveRunOptions,
   buildAttachTuiArgs,
+  readFullConfig,
+  generateRootPyproject,
+  generateUtilsPy,
+  generateTestUtilsPy,
+  generateReadme,
+  WORKSPACE_PACKAGES,
 } from "../src/index";
 
 test("expandHome leaves non-tilde paths unchanged", () => {
@@ -64,4 +70,66 @@ test("buildAttachTuiArgs includes session when provided", () => {
   expect(withSession.args.sessionID).toBe("abc");
   const withoutSession = buildAttachTuiArgs("http://localhost:4000", undefined, "/tmp");
   expect(withoutSession.args.sessionID).toBeUndefined();
+});
+
+test("WORKSPACE_PACKAGES contains expected packages", () => {
+  expect(WORKSPACE_PACKAGES).toContain("numpy");
+  expect(WORKSPACE_PACKAGES).toContain("pandas");
+  expect(WORKSPACE_PACKAGES).toContain("matplotlib");
+  expect(WORKSPACE_PACKAGES).toContain("scikit-learn");
+  expect(WORKSPACE_PACKAGES).toContain("jupyter");
+});
+
+test("readFullConfig returns null when no config exists", async () => {
+  const config = await readFullConfig("/nonexistent/path");
+  expect(config).toBeNull();
+});
+
+test("generateRootPyproject includes library name and dependencies", () => {
+  const pyproject = generateRootPyproject("agent_lib", ["numpy", "pandas"]);
+  expect(pyproject).toContain('name = "agent_lib"');
+  expect(pyproject).toContain('"numpy"');
+  expect(pyproject).toContain('"pandas"');
+  expect(pyproject).toContain('packages = ["src/agent_lib"]');
+  expect(pyproject).toContain("hatchling");
+});
+
+test("generateRootPyproject converts dashes to underscores in package path", () => {
+  const pyproject = generateRootPyproject("my-lib", ["numpy"]);
+  expect(pyproject).toContain('name = "my-lib"');
+  expect(pyproject).toContain('packages = ["src/my_lib"]');
+});
+
+test("generateUtilsPy includes library name in docstring and hello function", () => {
+  const utils = generateUtilsPy("agent_lib");
+  expect(utils).toContain("Utility functions for agent_lib");
+  expect(utils).toContain('return "Hello from agent_lib!"');
+  expect(utils).toContain("import numpy");
+  expect(utils).toContain("import pandas");
+});
+
+test("generateTestUtilsPy imports from correct module", () => {
+  const testUtils = generateTestUtilsPy("agent_lib");
+  expect(testUtils).toContain("from agent_lib.utils import");
+  expect(testUtils).toContain("def test_hello()");
+  expect(testUtils).toContain("def test_create_sample_dataframe()");
+});
+
+test("generateTestUtilsPy converts dashes to underscores in import", () => {
+  const testUtils = generateTestUtilsPy("my-lib");
+  expect(testUtils).toContain("from my_lib.utils import");
+  expect(testUtils).toContain('assert hello() == "Hello from my-lib!"');
+});
+
+test("generateReadme includes library name and usage example", () => {
+  const readme = generateReadme("agent_lib");
+  expect(readme).toContain("# agent_lib");
+  expect(readme).toContain("from agent_lib.utils import");
+  expect(readme).toContain("pytest");
+});
+
+test("generateReadme converts dashes to underscores in import example", () => {
+  const readme = generateReadme("my-lib");
+  expect(readme).toContain("# my-lib");
+  expect(readme).toContain("from my_lib.utils import");
 });
