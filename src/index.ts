@@ -85,6 +85,33 @@ function opencodeUrl(p: Platform): { url: string; extractedBinary: string } {
   };
 }
 
+function extractExtraArgs(argv: string[]): string[] {
+  const dashIdx = argv.indexOf("--");
+  return dashIdx >= 0 ? argv.slice(dashIdx + 1) : [];
+}
+
+function resolveRunOptions(
+  argv: { [key: string]: unknown },
+  processArgv: string[],
+): { extra: string[]; useNightshiftTui: boolean } {
+  return {
+    extra: extractExtraArgs(processArgv),
+    useNightshiftTui: Boolean(argv["run-nightshift-tui"]),
+  };
+}
+
+function buildAttachTuiArgs(url: string, session: string | undefined, directory: string): {
+  url: string;
+  args: { sessionID?: string };
+  directory: string;
+} {
+  return {
+    url,
+    args: session ? { sessionID: session } : {},
+    directory,
+  };
+}
+
 function pythonUrl(p: Platform): { url: string; extractedBinary: string } {
   const triple =
     p.os === "darwin"
@@ -385,6 +412,9 @@ export {
   pythonUrl,
   uvUrl,
   ripgrepUrl,
+  extractExtraArgs,
+  resolveRunOptions,
+  buildAttachTuiArgs,
 };
 
 if (import.meta.main) {
@@ -423,9 +453,7 @@ if (import.meta.main) {
           }),
       async (argv) => {
         try {
-          const dashIdx = process.argv.indexOf("--");
-          const extra = dashIdx >= 0 ? process.argv.slice(dashIdx + 1) : [];
-          const useNightshiftTui = Boolean(argv["run-nightshift-tui"]);
+          const { extra, useNightshiftTui } = resolveRunOptions(argv, process.argv);
           if (argv.prefix) {
             await run(argv.prefix, extra, useNightshiftTui);
             return;
@@ -452,11 +480,10 @@ if (import.meta.main) {
         }),
       async (argv) => {
         try {
-          const dashIdx = process.argv.indexOf("--");
-          const extra = dashIdx >= 0 ? process.argv.slice(dashIdx + 1) : [];
+          const { extra, useNightshiftTui } = resolveRunOptions(argv, process.argv);
           const resolved = await resolvePrefixFromConfig(process.cwd());
           console.log(`Using prefix from ${resolved.source}`);
-          await run(resolved.prefix, extra, Boolean(argv["run-nightshift-tui"]));
+          await run(resolved.prefix, extra, useNightshiftTui);
         } catch (err) {
           console.error("Run failed:", err);
           process.exit(1);
@@ -481,11 +508,7 @@ if (import.meta.main) {
       async (argv) => {
         try {
           const { tui } = await import("./cli/cmd/tui/tui/app");
-          await tui({
-            url: argv.url!,
-            args: { sessionID: argv.session },
-            directory: process.cwd(),
-          });
+          await tui(buildAttachTuiArgs(argv.url!, argv.session, process.cwd()));
         } catch (err) {
           console.error("Attach failed:", err);
           process.exit(1);

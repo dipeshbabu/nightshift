@@ -1,7 +1,15 @@
 import { test, expect } from "bun:test";
 import { homedir } from "os";
 import { join } from "path";
-import { configSearchPaths, expandHome, detectPlatform, opencodeUrl } from "../src/index";
+import {
+  configSearchPaths,
+  expandHome,
+  detectPlatform,
+  opencodeUrl,
+  extractExtraArgs,
+  resolveRunOptions,
+  buildAttachTuiArgs,
+} from "../src/index";
 
 test("expandHome leaves non-tilde paths unchanged", () => {
   expect(expandHome("/tmp/data")).toBe("/tmp/data");
@@ -36,4 +44,24 @@ test("opencodeUrl encodes platform data", () => {
   expect(darwin.url).toContain("opencode-darwin-arm64.zip");
   const linux = opencodeUrl({ os: "linux", arch: "x86_64" });
   expect(linux.url).toContain("opencode-linux-x64.tar.gz");
+});
+
+test("extractExtraArgs returns args after --", () => {
+  expect(extractExtraArgs(["bun", "src/index.ts"])).toEqual([]);
+  expect(extractExtraArgs(["bun", "src/index.ts", "--", "serve", "-v"]))
+    .toEqual(["serve", "-v"]);
+});
+
+test("resolveRunOptions captures tui flag and extra args", () => {
+  const argv = { "run-nightshift-tui": true };
+  const result = resolveRunOptions(argv, ["bun", "src/index.ts", "--", "serve"]);
+  expect(result.useNightshiftTui).toBe(true);
+  expect(result.extra).toEqual(["serve"]);
+});
+
+test("buildAttachTuiArgs includes session when provided", () => {
+  const withSession = buildAttachTuiArgs("http://localhost:4000", "abc", "/tmp");
+  expect(withSession.args.sessionID).toBe("abc");
+  const withoutSession = buildAttachTuiArgs("http://localhost:4000", undefined, "/tmp");
+  expect(withoutSession.args.sessionID).toBeUndefined();
 });
