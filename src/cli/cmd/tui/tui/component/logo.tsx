@@ -3,27 +3,24 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import { useTheme } from "@tui/context/theme"
 
 const BIRD_PIXELS = [
-  "....GGGGGG....",
-  "...GHHHHHHG...",
-  "..GHHLLLLHHG..",
-  ".GHLKLLLKLHG..",
-  ".GHHLLLOLLHHG.",
-  ".GHHLLWOWLHHG.",
-  ".GHHLLLLLLHHG.",
-  "..GGYYYYYYGG..",
-  "...GGYYYYGG...",
-  "...DD....DD...",
+  "..HHHHHHHHH..",
+  ".GLLLHHHLLLG.",
+  "HHLLKLLLKLLHH",
+  "HHLLKLOOKLLHH",
+  "HHLLLOWOLLLHH",
+  "HHLLLLOLLLLHH",
+  "HHHHHHHHHHHHH",
+  ".HHHHHHHHHHH.",
+  "..GGG...GGG..",
 ]
 
 const BIRD_COLORS: Record<string, RGBA> = {
-  G: RGBA.fromHex("#7aa51a"),
-  H: RGBA.fromHex("#92c137"),
-  D: RGBA.fromHex("#5a8a0a"),
-  L: RGBA.fromHex("#f7f37b"),
-  Y: RGBA.fromHex("#d6d100"),
-  K: RGBA.fromHex("#111111"),
-  O: RGBA.fromHex("#f6a11a"),
-  W: RGBA.fromHex("#f7f4ea"),
+  G: RGBA.fromHex("#4E8019"),
+  H: RGBA.fromHex("#6C9B21"),
+  L: RGBA.fromHex("#F7F174"),
+  K: RGBA.fromHex("#222222"),
+  O: RGBA.fromHex("#FA9E28"),
+  W: RGBA.fromHex("#FACB40"),
 }
 
 type LogoProps = {
