@@ -14,6 +14,8 @@ import {
   generateUtilsPy,
   generateTestUtilsPy,
   generateReadme,
+  generateAgentsMd,
+  generateOpencodeConfig,
   WORKSPACE_PACKAGES,
 } from "../src/index";
 
@@ -132,4 +134,30 @@ test("generateReadme converts dashes to underscores in import example", () => {
   const readme = generateReadme("my-lib");
   expect(readme).toContain("# my-lib");
   expect(readme).toContain("from my_lib.utils import");
+});
+
+test("generateAgentsMd includes uv instructions", () => {
+  const agentsMd = generateAgentsMd("agent_lib");
+  expect(agentsMd).toContain("uv add");
+  expect(agentsMd).toContain("uv sync");
+  expect(agentsMd).toContain("uv run");
+  expect(agentsMd).toContain("src/agent_lib");
+  expect(agentsMd).toContain("Do NOT use pip");
+});
+
+test("generateAgentsMd converts dashes to underscores in paths", () => {
+  const agentsMd = generateAgentsMd("my-lib");
+  expect(agentsMd).toContain("src/my_lib");
+});
+
+test("generateOpencodeConfig returns valid JSON with expected permissions", () => {
+  const configStr = generateOpencodeConfig();
+  const config = JSON.parse(configStr);
+  expect(config.$schema).toBe("https://opencode.ai/config.json");
+  expect(config.permission.edit).toBe("ask");
+  expect(config.permission.bash).toBe("ask");
+  expect(config.permission.read).toBe("allow");
+  expect(config.permission.write).toBe("allow");
+  expect(config.permission.glob).toBe("allow");
+  expect(config.permission.grep).toBe("ask");
 });

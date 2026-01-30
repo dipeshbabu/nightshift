@@ -15,17 +15,5 @@
     "todowrite": "allow",
     "todoread": "allow",
     "question": "allow"
-  },
-  "lsp": {
-    "pyright": {
-      "command": [
-        "pyright-langserver",
-        "--stdio"
-      ],
-      "extensions": [
-        ".py",
-        ".pyi"
-      ]
-    }
   }
 }

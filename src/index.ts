@@ -1,5 +1,5 @@
 import yargs from "yargs";
-import { resolve, join, relative, dirname } from "path";
+import { resolve, join, relative } from "path";
 import { homedir } from "os";
 import { mkdirSync, symlinkSync, existsSync, chmodSync } from "fs";
 
@@ -9,7 +9,6 @@ const PYTHON_RELEASE = "20260127";
 const UV_VERSION = "0.9.27";
 const RIPGREP_VERSION = "15.1.0";
 
-const DATA_SCIENCE_PACKAGES = ["numpy", "pandas"];
 const WORKSPACE_PACKAGES = ["numpy", "pandas", "matplotlib", "scikit-learn", "jupyter"];
 
 interface Platform {
@@ -256,42 +255,6 @@ async function installTool(
 }
 
 
-async function createVenv(prefix: string): Promise<void> {
-  console.log("\nCreating data-science venv...");
-  const python = join(prefix, "bin", "python3");
-  const venvPath = join(prefix, "venvs", "data-science");
-  mkdirSync(dirname(venvPath), { recursive: true });
-
-
-  const proc = Bun.spawn([python, "-m", "venv", venvPath], {
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const exitCode = await proc.exited;
-  if (exitCode !== 0) throw new Error(`venv creation failed (${exitCode})`);
-  console.log(`  Venv created at ${venvPath}`);
-}
-
-
-async function installPackages(prefix: string, packages: string[]): Promise<void> {
-  console.log(`\nInstalling packages: ${packages.join(", ")}...`);
-  const uv = join(prefix, "bin", "uv");
-  const venvPython = join(prefix, "venvs", "data-science", "bin", "python3");
-
-  const proc = Bun.spawn([uv, "pip", "install", "--python", venvPython, ...packages], {
-    stdout: "inherit",
-    stderr: "inherit",
-    env: {
-      ...process.env,
-      PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
-    },
-  });
-  const exitCode = await proc.exited;
-  if (exitCode !== 0) throw new Error(`Package install failed (${exitCode})`);
-  console.log("  Packages installed successfully.");
-}
-
-
 function generateRootPyproject(libraryName: string, packages: string[]): string {
   const depsStr = packages.map((p) => `    "${p}",`).join("\n");
   const snakeName = libraryName.replace(/-/g, "_");
@@ -368,6 +331,67 @@ pytest
 `;
 }
 
+function generateOpencodeConfig(): string {
+  return JSON.stringify({
+    "$schema": "https://opencode.ai/config.json",
+    "permission": {
+      "edit": "ask",
+      "bash": "ask",
+      "webfetch": "allow",
+      "write": "allow",
+      "codesearch": "allow",
+      "read": "allow",
+      "grep": "ask",
+      "glob": "allow",
+      "list": "allow",
+      "lsp": "allow",
+      "skill": "allow",
+      "todowrite": "allow",
+      "todoread": "allow",
+      "question": "allow"
+    }
+  }, null, 2);
+}
+
+function generateAgentsMd(libraryName: string): string {
+  const snakeName = libraryName.replace(/-/g, "_");
+  return `# Nightshift Workspace
+
+This is a Python data science workspace managed by Nightshift.
+
+## Python Package Management
+
+This workspace uses **uv** for Python package management. Do NOT use pip directly.
+
+### Common uv Commands
+
+- **Add a dependency**: \`uv add <package>\`
+- **Add a dev dependency**: \`uv add --dev <package>\`
+- **Sync/install dependencies**: \`uv sync\`
+- **Run Python scripts**: \`uv run python <script.py>\`
+- **Run pytest**: \`uv run pytest\`
+
+### Important Notes
+
+- The virtual environment is at \`.venv/\`
+- Dependencies are defined in \`pyproject.toml\`
+- Never use \`pip install\` - use \`uv add\` instead
+- Never activate the venv manually - use \`uv run\` to execute commands
+
+## Project Structure
+
+\`\`\`
+pyproject.toml      # Project metadata and dependencies
+src/${snakeName}/   # Library source code
+  __init__.py
+  utils.py
+tests/              # Test files
+  test_utils.py
+.venv/              # Virtual environment (managed by uv)
+\`\`\`
+`;
+}
+
 async function createWorkspaceScaffold(
   workspacePath: string,
   libraryName: string,
@@ -387,6 +411,8 @@ async function createWorkspaceScaffold(
   await Bun.write(join(testsDir, "__init__.py"), "");
   await Bun.write(join(testsDir, "test_utils.py"), generateTestUtilsPy(libraryName));
   await Bun.write(join(workspacePath, "README.md"), generateReadme(libraryName));
+  await Bun.write(join(workspacePath, "AGENTS.md"), generateAgentsMd(libraryName));
+  await Bun.write(join(workspacePath, "opencode.json"), generateOpencodeConfig());
 
   console.log(`  Created workspace scaffold with library "${libraryName}"`);
 }
@@ -459,8 +485,6 @@ async function install(prefix: string): Promise<void> {
     { linkName: "opencode", target: oc.extractedBinary },
   ]);
 
-  await createVenv(prefix);
-  await installPackages(prefix, DATA_SCIENCE_PACKAGES);
   await installUvTools(prefix);
 
   // Create workspace scaffold
@@ -486,7 +510,6 @@ async function install(prefix: string): Promise<void> {
 async function run(prefix: string, args: string[], useNightshiftTui: boolean): Promise<void> {
   prefix = resolve(prefix);
   const binDir = join(prefix, "bin");
-  const venvBin = join(prefix, "venvs", "data-science", "bin");
   const uvToolsBin = join(prefix, "uv-tools", "bin");
   const opencode = join(binDir, "opencode");
 
@@ -502,7 +525,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
   const workspaceVenvBin = join(workspacePath, ".venv", "bin");
 
   // Build PATH with workspace venv and uv tools if they exist
-  let pathParts = [venvBin, binDir];
+  let pathParts = [binDir];
   if (existsSync(workspaceVenvBin)) pathParts.unshift(workspaceVenvBin);
   if (existsSync(uvToolsBin)) pathParts.unshift(uvToolsBin);
   const PATH = `${pathParts.join(":")}:${process.env.PATH ?? ""}`;
@@ -515,7 +538,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
 
   if (useNightshiftTui) {
     // Start opencode as a server and attach nightshift TUI
-    await runWithNightshiftTui(opencode, PATH, PYTHONPATH, args);
+    await runWithNightshiftTui(opencode, PATH, PYTHONPATH, workspacePath, args);
   } else {
     // Standard opencode execution
     console.log(`Launching opencode with isolated PATH`);
@@ -525,6 +548,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
     }
 
     const proc = Bun.spawn([opencode, ...args], {
+      cwd: workspacePath,
       stdout: "inherit",
       stderr: "inherit",
       stdin: "inherit",
@@ -541,7 +565,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
   }
 }
 
-async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPATH: string, _args: string[]): Promise<void> {
+async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPATH: string, workspacePath: string, _args: string[]): Promise<void> {
   // Find an available port
   const port = 4096 + Math.floor(Math.random() * 1000);
   const url = `http://127.0.0.1:${port}`;
@@ -550,6 +574,7 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPA
 
   // Start opencode as a server
   const serverProc = Bun.spawn([opencodePath, "serve", "--port", String(port)], {
+    cwd: workspacePath,
     stdout: "pipe",
     stderr: "pipe",
     env: {
@@ -612,6 +637,8 @@ export {
   generateUtilsPy,
   generateTestUtilsPy,
   generateReadme,
+  generateAgentsMd,
+  generateOpencodeConfig,
   WORKSPACE_PACKAGES,
 };
 
