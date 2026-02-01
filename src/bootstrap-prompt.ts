@@ -129,6 +129,42 @@ function getFiletype(filename: string): string | undefined {
   return ext ? mapping[ext] : undefined;
 }
 
+// Tool status configuration for appendToolStatus
+const TOOL_STATUS_CONFIG = {
+  running: { prefix: "▶", color: COLORS.toolRunning },
+  completed: { prefix: "✓", color: COLORS.toolCompleted },
+  error: { prefix: "✗", color: COLORS.toolError },
+} as const;
+
+// Shared styling for SelectRenderable instances
+const SELECT_STYLE = {
+  backgroundColor: COLORS.backgroundPanel,
+  textColor: COLORS.text,
+  selectedBackgroundColor: COLORS.primary,
+  selectedTextColor: "#000000",
+  descriptionColor: COLORS.textMuted,
+  selectedDescriptionColor: "#000000",
+  wrapSelection: true,
+} as const;
+
+// Shared styling for InputRenderable instances
+const INPUT_STYLE = {
+  height: 1,
+  textColor: COLORS.text,
+  focusedTextColor: "#ffffff",
+  cursorColor: COLORS.primary,
+  placeholderColor: COLORS.textMuted,
+} as const;
+
+// Diff renderable colors used in multiple places
+const DIFF_COLORS = {
+  addedBg: RGBA.fromHex("#1a3d1a"),
+  removedBg: RGBA.fromHex("#3d1a1a"),
+  addedSignColor: RGBA.fromHex("#98c379"),
+  removedSignColor: RGBA.fromHex("#e06c75"),
+  fg: RGBA.fromHex("#e6edf3"),
+} as const;
+
 function buildPath(prefix: string): string {
   const { existsSync } = require("fs");
   const binDir = join(prefix, "bin");
@@ -183,15 +219,6 @@ type ViewState =
 
 /**
  * Shows a TUI prompt for provider selection, model selection, and user intent.
- *
- * Flow:
- * 1. Start opencode server
- * 2. Check if provider is already connected
- * 3. If not connected, show provider selection dialog
- * 4. After auth success, show model selection dialog
- * 5. After model selection, show intent prompt
- * 6. Run bootstrap with user's intent and selected model
- *
  * @param onBootstrap - Called with the user's intent, UI interface, SDK client, server URL, and selected model
  * @param options - Configuration including prefix, workspacePath, and xdgEnv
  * @returns The user's intent string, or null if they skipped (Ctrl+C), along with the SDK client and selected model
@@ -268,27 +295,23 @@ export async function runBootstrapPrompt(
     // Track selected model
     let selectedModel: ModelOption | null = null;
 
+    // Helper to destroy renderer (skip for custom renderers used in testing)
+    const destroyRenderer = () => {
+      if (!customRenderer) renderer.destroy();
+    };
+
     const cleanup = async (value: BootstrapPromptResult | null) => {
       if (resolved) return;
       resolved = true;
-      // Don't destroy custom renderers (for testing)
-      if (!customRenderer) {
-        renderer.destroy();
-      }
-      // Kill server if returning null (user cancelled)
-      if (!value) {
-        serverProc.kill();
-      }
+      destroyRenderer();
+      if (!value) serverProc.kill();
       resolve(value);
     };
 
     const cleanupWithError = (err: unknown) => {
       if (resolved) return;
       resolved = true;
-      // Don't destroy custom renderers (for testing)
-      if (!customRenderer) {
-        renderer.destroy();
-      }
+      destroyRenderer();
       serverProc.kill();
       reject(err);
     };
@@ -309,6 +332,24 @@ export async function runBootstrapPrompt(
       }),
     };
 
+    // Helper to create a standard view container
+    const createViewContainer = (id: string, visible = false) =>
+      new BoxRenderable(renderer, {
+        id,
+        flexDirection: "column",
+        gap: 1,
+        padding: 1,
+        visible,
+      });
+
+    // Helper to create a spinner with standard config
+    const createSpinner = () =>
+      new SpinnerRenderable(renderer, {
+        frames: spinnerDef.frames,
+        color: spinnerDef.colors,
+        interval: 40,
+      });
+
     // Create main container
     const container = new BoxRenderable(renderer, {
       id: "container",
@@ -317,20 +358,9 @@ export async function runBootstrapPrompt(
       height: "100%",
     });
 
-    // === Loading View ===
-    loadingContainer = new BoxRenderable(renderer, {
-      id: "loading-container",
-      flexDirection: "column",
-      gap: 1,
-      padding: 1,
-      visible: true,
-    });
+    loadingContainer = createViewContainer("loading-container", true);
 
-    const loadingSpinner = new SpinnerRenderable(renderer, {
-      frames: spinnerDef.frames,
-      color: spinnerDef.colors,
-      interval: 40,
-    });
+    const loadingSpinner = createSpinner();
 
     const loadingText = new TextRenderable(renderer, {
       id: "loading-text",
@@ -347,14 +377,7 @@ export async function runBootstrapPrompt(
     loadingRow.add(loadingText);
     loadingContainer.add(loadingRow);
 
-    // === Provider Selection View ===
-    providerSelectContainer = new BoxRenderable(renderer, {
-      id: "provider-select-container",
-      flexDirection: "column",
-      gap: 1,
-      padding: 1,
-      visible: false,
-    });
+    providerSelectContainer = createViewContainer("provider-select-container");
 
     const providerLabel = new TextRenderable(renderer, {
       id: "provider-label",
@@ -375,13 +398,7 @@ export async function runBootstrapPrompt(
       ],
       width: 50,
       height: 5,
-      backgroundColor: COLORS.backgroundPanel,
-      textColor: COLORS.text,
-      selectedBackgroundColor: COLORS.primary,
-      selectedTextColor: "#000000",
-      descriptionColor: COLORS.textMuted,
-      selectedDescriptionColor: "#000000",
-      wrapSelection: true,
+      ...SELECT_STYLE,
     });
 
     const providerHelpText = new TextRenderable(renderer, {
@@ -394,14 +411,7 @@ export async function runBootstrapPrompt(
     providerSelectContainer.add(providerSelect);
     providerSelectContainer.add(providerHelpText);
 
-    // === Auth Method Selection View ===
-    authMethodContainer = new BoxRenderable(renderer, {
-      id: "auth-method-container",
-      flexDirection: "column",
-      gap: 1,
-      padding: 1,
-      visible: false,
-    });
+    authMethodContainer = createViewContainer("auth-method-container");
 
     const authMethodLabel = new TextRenderable(renderer, {
       id: "auth-method-label",
@@ -409,19 +419,13 @@ export async function runBootstrapPrompt(
       fg: COLORS.primary,
     });
 
-    // Create SelectRenderable for auth methods (will be populated dynamically)
+    // Create SelectRenderable for auth methods 
     authMethodSelect = new SelectRenderable(renderer, {
       id: "auth-method-select",
       options: [],
       width: 50,
       height: 4,
-      backgroundColor: COLORS.backgroundPanel,
-      textColor: COLORS.text,
-      selectedBackgroundColor: COLORS.primary,
-      selectedTextColor: "#000000",
-      descriptionColor: COLORS.textMuted,
-      selectedDescriptionColor: "#000000",
-      wrapSelection: true,
+      ...SELECT_STYLE,
     });
 
     const authMethodHelpText = new TextRenderable(renderer, {
@@ -434,14 +438,7 @@ export async function runBootstrapPrompt(
     authMethodContainer.add(authMethodSelect);
     authMethodContainer.add(authMethodHelpText);
 
-    // === OAuth Auto View (browser-based polling) ===
-    oauthAutoContainer = new BoxRenderable(renderer, {
-      id: "oauth-auto-container",
-      flexDirection: "column",
-      gap: 1,
-      padding: 1,
-      visible: false,
-    });
+    oauthAutoContainer = createViewContainer("oauth-auto-container");
 
     const oauthAutoLabel = new TextRenderable(renderer, {
       id: "oauth-auto-label",
@@ -461,11 +458,7 @@ export async function runBootstrapPrompt(
       fg: COLORS.textMuted,
     });
 
-    const oauthAutoSpinner = new SpinnerRenderable(renderer, {
-      frames: spinnerDef.frames,
-      color: spinnerDef.colors,
-      interval: 40,
-    });
+    const oauthAutoSpinner = createSpinner();
 
     oauthWaitingText = new TextRenderable(renderer, {
       id: "oauth-waiting",
@@ -493,14 +486,7 @@ export async function runBootstrapPrompt(
     oauthAutoContainer.add(oauthWaitingRow);
     oauthAutoContainer.add(oauthAutoEscText);
 
-    // === OAuth Code View (manual code entry) ===
-    oauthCodeContainer = new BoxRenderable(renderer, {
-      id: "oauth-code-container",
-      flexDirection: "column",
-      gap: 1,
-      padding: 1,
-      visible: false,
-    });
+    oauthCodeContainer = createViewContainer("oauth-code-container");
 
     const oauthCodeLabel = new TextRenderable(renderer, {
       id: "oauth-code-label",
@@ -522,13 +508,9 @@ export async function runBootstrapPrompt(
 
     codeInput = new InputRenderable(renderer, {
       id: "code-input",
-      height: 1,
       width: 40,
       placeholder: "Authorization code",
-      textColor: COLORS.text,
-      focusedTextColor: "#ffffff",
-      cursorColor: COLORS.primary,
-      placeholderColor: COLORS.textMuted,
+      ...INPUT_STYLE,
     });
 
     codeErrorText = new TextRenderable(renderer, {
@@ -551,14 +533,7 @@ export async function runBootstrapPrompt(
     oauthCodeContainer.add(codeErrorText);
     oauthCodeContainer.add(oauthCodeHelpText);
 
-    // === API Key View ===
-    apiKeyContainer = new BoxRenderable(renderer, {
-      id: "api-key-container",
-      flexDirection: "column",
-      gap: 1,
-      padding: 1,
-      visible: false,
-    });
+    apiKeyContainer = createViewContainer("api-key-container");
 
     const apiKeyLabel = new TextRenderable(renderer, {
       id: "api-key-label",
@@ -568,13 +543,9 @@ export async function runBootstrapPrompt(
 
     apiKeyInput = new InputRenderable(renderer, {
       id: "api-key-input",
-      height: 1,
       width: 60,
       placeholder: "API key",
-      textColor: COLORS.text,
-      focusedTextColor: "#ffffff",
-      cursorColor: COLORS.primary,
-      placeholderColor: COLORS.textMuted,
+      ...INPUT_STYLE,
     });
 
     apiKeyErrorText = new TextRenderable(renderer, {
@@ -595,14 +566,7 @@ export async function runBootstrapPrompt(
     apiKeyContainer.add(apiKeyErrorText);
     apiKeyContainer.add(apiKeyHelpText);
 
-    // === Model Selection View ===
-    modelSelectContainer = new BoxRenderable(renderer, {
-      id: "model-select-container",
-      flexDirection: "column",
-      gap: 1,
-      padding: 1,
-      visible: false,
-    });
+    modelSelectContainer = createViewContainer("model-select-container");
 
     const modelSelectLabel = new TextRenderable(renderer, {
       id: "model-select-label",
@@ -616,13 +580,7 @@ export async function runBootstrapPrompt(
       options: [],
       width: 50,
       height: 8,
-      backgroundColor: COLORS.backgroundPanel,
-      textColor: COLORS.text,
-      selectedBackgroundColor: COLORS.primary,
-      selectedTextColor: "#000000",
-      descriptionColor: COLORS.textMuted,
-      selectedDescriptionColor: "#000000",
-      wrapSelection: true,
+      ...SELECT_STYLE,
     });
 
     const modelSelectHelpText = new TextRenderable(renderer, {
@@ -635,14 +593,7 @@ export async function runBootstrapPrompt(
     modelSelectContainer.add(modelSelect);
     modelSelectContainer.add(modelSelectHelpText);
 
-    // === Intent Prompt View ===
-    intentContainer = new BoxRenderable(renderer, {
-      id: "intent-container",
-      flexDirection: "column",
-      gap: 1,
-      padding: 1,
-      visible: false,
-    });
+    intentContainer = createViewContainer("intent-container");
 
     const intentLabel = new TextRenderable(renderer, {
       id: "intent-label",
@@ -652,13 +603,9 @@ export async function runBootstrapPrompt(
 
     intentInput = new InputRenderable(renderer, {
       id: "intent-input",
-      height: 1,
       width: 60,
       placeholder: "e.g., managing my personal finances, analyzing data...",
-      textColor: COLORS.text,
-      focusedTextColor: "#ffffff",
-      cursorColor: COLORS.primary,
-      placeholderColor: COLORS.textMuted,
+      ...INPUT_STYLE,
     });
 
     const intentHelpText = new TextRenderable(renderer, {
@@ -671,7 +618,6 @@ export async function runBootstrapPrompt(
     intentContainer.add(intentInput);
     intentContainer.add(intentHelpText);
 
-    // === Output View ===
     outputContainer = new BoxRenderable(renderer, {
       id: "output-container",
       flexDirection: "column",
@@ -687,11 +633,7 @@ export async function runBootstrapPrompt(
       height: 1,
     });
 
-    spinner = new SpinnerRenderable(renderer, {
-      frames: spinnerDef.frames,
-      color: spinnerDef.colors,
-      interval: 40,
-    });
+    spinner = createSpinner();
 
     statusText = new TextRenderable(renderer, {
       id: "status",
@@ -733,17 +675,55 @@ export async function runBootstrapPrompt(
 
     renderer.root.add(container);
 
+    // Map view types to their containers for showView
+    const viewContainers: Record<ViewState["type"], BoxRenderable> = {
+      "loading": loadingContainer,
+      "provider-select": providerSelectContainer,
+      "auth-method-select": authMethodContainer,
+      "oauth-auto": oauthAutoContainer,
+      "oauth-code": oauthCodeContainer,
+      "api-key": apiKeyContainer,
+      "model-select": modelSelectContainer,
+      "intent-prompt": intentContainer,
+      "bootstrap-output": outputContainer,
+    };
+
     // Helper to show only one view
     const showView = (view: ViewState["type"]) => {
-      loadingContainer.visible = view === "loading";
-      providerSelectContainer.visible = view === "provider-select";
-      authMethodContainer.visible = view === "auth-method-select";
-      oauthAutoContainer.visible = view === "oauth-auto";
-      oauthCodeContainer.visible = view === "oauth-code";
-      apiKeyContainer.visible = view === "api-key";
-      modelSelectContainer.visible = view === "model-select";
-      intentContainer.visible = view === "intent-prompt";
-      outputContainer.visible = view === "bootstrap-output";
+      for (const [type, container] of Object.entries(viewContainers)) {
+        container.visible = type === view;
+      }
+    };
+
+    // Helper to navigate back to provider selection
+    const goToProviderSelect = () => {
+      viewState = { type: "provider-select", selectedIndex: 0 };
+      showView("provider-select");
+      providerSelect.setSelectedIndex(0);
+      providerSelect.focus();
+    };
+
+    // Helper to navigate to intent prompt
+    const goToIntentPrompt = () => {
+      viewState = { type: "intent-prompt" };
+      showView("intent-prompt");
+      intentInput.focus();
+    };
+
+    // Helper to set up API key view
+    const goToApiKeyView = (providerId: string) => {
+      viewState = { type: "api-key", providerId };
+      showView("api-key");
+      apiKeyInput.focus();
+      apiKeyInput.value = "";
+      apiKeyErrorText.visible = false;
+    };
+
+    // Helper to show loading view with a message
+    const showLoading = (message: string) => {
+      loadingText.content = message;
+      viewState = { type: "loading" };
+      showView("loading");
     };
 
     // Helper to set auth method options
@@ -759,6 +739,69 @@ export async function runBootstrapPrompt(
     // Track current text node for appending deltas to the same line
     let currentTextNode: TextRenderable | null = null;
     let currentTextContent = "";
+
+    // Reset current text tracking (used before adding new output blocks)
+    const resetTextTracking = () => {
+      currentTextNode = null;
+      currentTextContent = "";
+    };
+
+    // Create a styled output block box with left border
+    const createOutputBlock = (blockId: string): BoxRenderable => {
+      return new BoxRenderable(renderer, {
+        id: blockId,
+        flexDirection: "column",
+        border: ["left"],
+        paddingTop: 1,
+        paddingBottom: 1,
+        paddingLeft: 2,
+        marginTop: 1,
+        gap: 1,
+        backgroundColor: COLORS.backgroundPanel,
+        borderColor: COLORS.background,
+      });
+    };
+
+    // Add expandable text content to a block with "click to expand" functionality
+    const addExpandableContent = (
+      blockBox: BoxRenderable,
+      blockId: string,
+      content: string,
+      lines: string[],
+    ) => {
+      const truncated = lines.length > 10;
+      let expanded = false;
+
+      const contentText = new TextRenderable(renderer, {
+        id: `${blockId}-content`,
+        content: truncated ? lines.slice(0, 10).join("\n") : content,
+        fg: COLORS.text,
+        wrapMode: "word",
+      });
+      blockBox.add(contentText);
+
+      if (truncated) {
+        const moreText = new TextRenderable(renderer, {
+          id: `${blockId}-more`,
+          content: `... (${lines.length - 10} more lines) - click to expand`,
+          fg: COLORS.textMuted,
+          onMouseUp: () => {
+            expanded = !expanded;
+            contentText.content = expanded ? content : lines.slice(0, 10).join("\n");
+            moreText.content = expanded
+              ? "click to collapse"
+              : `... (${lines.length - 10} more lines) - click to expand`;
+          },
+          onMouseOver: function() {
+            this.fg = COLORS.primary;
+          },
+          onMouseOut: function() {
+            this.fg = COLORS.textMuted;
+          },
+        });
+        blockBox.add(moreText);
+      }
+    };
 
     // Create UI interface for bootstrap process
     const ui: BootstrapUI = {
@@ -779,25 +822,8 @@ export async function runBootstrapPrompt(
         }
       },
       appendToolStatus: (status: "running" | "completed" | "error", text: string) => {
-        currentTextNode = null;
-        currentTextContent = "";
-
-        let prefix: string;
-        let color: string;
-        switch (status) {
-          case "running":
-            prefix = "▶";
-            color = COLORS.toolRunning;
-            break;
-          case "completed":
-            prefix = "✓";
-            color = COLORS.toolCompleted;
-            break;
-          case "error":
-            prefix = "✗";
-            color = COLORS.toolError;
-            break;
-        }
+        resetTextTracking();
+        const { prefix, color } = TOOL_STATUS_CONFIG[status];
         const statusNode = new TextRenderable(renderer, {
           id: `status-${outputCounter++}`,
           content: `${prefix} ${text}`,
@@ -809,8 +835,7 @@ export async function runBootstrapPrompt(
         statusText.content = status;
       },
       showDiff: (diffs: FileDiff[]) => {
-        currentTextNode = null;
-        currentTextContent = "";
+        resetTextTracking();
 
         for (const diff of diffs) {
           const headerNode = new TextRenderable(renderer, {
@@ -830,11 +855,7 @@ export async function runBootstrapPrompt(
             syntaxStyle,
             filetype,
             showLineNumbers: true,
-            addedBg: RGBA.fromHex("#1a3d1a"),
-            removedBg: RGBA.fromHex("#3d1a1a"),
-            addedSignColor: RGBA.fromHex("#98c379"),
-            removedSignColor: RGBA.fromHex("#e06c75"),
-            fg: RGBA.fromHex("#e6edf3"),
+            ...DIFF_COLORS,
             width: "100%",
             height: Math.min(diff.additions + diff.deletions + 4, 20),
           });
@@ -843,31 +864,16 @@ export async function runBootstrapPrompt(
         }
       },
       showBashOutput: (command: string, output: string, description?: string) => {
-        currentTextNode = null;
-        currentTextContent = "";
-
+        resetTextTracking();
         const blockId = `bash-${outputCounter++}`;
         const cleanOutput = stripAnsi(output.trim());
         const lines = cleanOutput.split("\n");
-        const truncated = lines.length > 10;
 
-        const blockBox = new BoxRenderable(renderer, {
-          id: blockId,
-          flexDirection: "column",
-          border: ["left"],
-          paddingTop: 1,
-          paddingBottom: 1,
-          paddingLeft: 2,
-          marginTop: 1,
-          gap: 1,
-          backgroundColor: COLORS.backgroundPanel,
-          borderColor: COLORS.background,
-        });
+        const blockBox = createOutputBlock(blockId);
 
-        const title = description ? `# ${description}` : "# Shell";
         const titleText = new TextRenderable(renderer, {
           id: `${blockId}-title`,
-          content: title,
+          content: description ? `# ${description}` : "# Shell",
           fg: COLORS.textMuted,
         });
 
@@ -881,62 +887,15 @@ export async function runBootstrapPrompt(
         blockBox.add(commandText);
 
         if (cleanOutput) {
-          let expanded = false;
-
-          const outputTextNode = new TextRenderable(renderer, {
-            id: `${blockId}-output`,
-            content: truncated ? lines.slice(0, 10).join("\n") : cleanOutput,
-            fg: COLORS.text,
-            wrapMode: "word",
-          });
-          blockBox.add(outputTextNode);
-
-          if (truncated) {
-            const moreText = new TextRenderable(renderer, {
-              id: `${blockId}-more`,
-              content: `... (${lines.length - 10} more lines) - click to expand`,
-              fg: COLORS.textMuted,
-              onMouseUp: () => {
-                expanded = !expanded;
-                if (expanded) {
-                  outputTextNode.content = cleanOutput;
-                  moreText.content = "click to collapse";
-                } else {
-                  outputTextNode.content = lines.slice(0, 10).join("\n");
-                  moreText.content = `... (${lines.length - 10} more lines) - click to expand`;
-                }
-              },
-              onMouseOver: function() {
-                this.fg = COLORS.primary;
-              },
-              onMouseOut: function() {
-                this.fg = COLORS.textMuted;
-              },
-            });
-            blockBox.add(moreText);
-          }
+          addExpandableContent(blockBox, blockId, cleanOutput, lines);
         }
 
         scrollBox.add(blockBox);
       },
       showWriteOutput: (filePath: string, content: string) => {
-        currentTextNode = null;
-        currentTextContent = "";
-
+        resetTextTracking();
         const blockId = `write-${outputCounter++}`;
-
-        const blockBox = new BoxRenderable(renderer, {
-          id: blockId,
-          flexDirection: "column",
-          border: ["left"],
-          paddingTop: 1,
-          paddingBottom: 1,
-          paddingLeft: 2,
-          marginTop: 1,
-          gap: 1,
-          backgroundColor: COLORS.backgroundPanel,
-          borderColor: COLORS.background,
-        });
+        const blockBox = createOutputBlock(blockId);
 
         const titleText = new TextRenderable(renderer, {
           id: `${blockId}-title`,
@@ -948,68 +907,19 @@ export async function runBootstrapPrompt(
 
         if (content && content.trim()) {
           const lines = content.split("\n");
-          const truncated = lines.length > 10;
-          let expanded = false;
-
-          const contentText = new TextRenderable(renderer, {
-            id: `${blockId}-content`,
-            content: truncated ? lines.slice(0, 10).join("\n") : content,
-            fg: COLORS.text,
-            wrapMode: "word",
-          });
-          blockBox.add(contentText);
-
-          if (truncated) {
-            const moreText = new TextRenderable(renderer, {
-              id: `${blockId}-more`,
-              content: `... (${lines.length - 10} more lines) - click to expand`,
-              fg: COLORS.textMuted,
-              onMouseUp: () => {
-                expanded = !expanded;
-                if (expanded) {
-                  contentText.content = content;
-                  moreText.content = "click to collapse";
-                } else {
-                  contentText.content = lines.slice(0, 10).join("\n");
-                  moreText.content = `... (${lines.length - 10} more lines) - click to expand`;
-                }
-              },
-              onMouseOver: function() {
-                this.fg = COLORS.primary;
-              },
-              onMouseOut: function() {
-                this.fg = COLORS.textMuted;
-              },
-            });
-            blockBox.add(moreText);
-          }
+          addExpandableContent(blockBox, blockId, content, lines);
         }
 
         scrollBox.add(blockBox);
       },
       showEditOutput: (filePath: string, diff: string) => {
-        currentTextNode = null;
-        currentTextContent = "";
-
+        resetTextTracking();
         const blockId = `edit-${outputCounter++}`;
-        const filetype = getFiletype(filePath);
-
-        const blockBox = new BoxRenderable(renderer, {
-          id: blockId,
-          flexDirection: "column",
-          border: ["left"],
-          paddingTop: 1,
-          paddingBottom: 1,
-          paddingLeft: 2,
-          marginTop: 1,
-          gap: 1,
-          backgroundColor: COLORS.backgroundPanel,
-          borderColor: COLORS.background,
-        });
+        const blockBox = createOutputBlock(blockId);
 
         const titleText = new TextRenderable(renderer, {
           id: `${blockId}-title`,
-          content: `← Edit ${filePath}`,
+          content: `\u2190 Edit ${filePath}`,
           fg: COLORS.textMuted,
         });
 
@@ -1021,13 +931,9 @@ export async function runBootstrapPrompt(
             diff: diff,
             view: "unified",
             syntaxStyle,
-            filetype,
+            filetype: getFiletype(filePath),
             showLineNumbers: true,
-            addedBg: RGBA.fromHex("#1a3d1a"),
-            removedBg: RGBA.fromHex("#3d1a1a"),
-            addedSignColor: RGBA.fromHex("#98c379"),
-            removedSignColor: RGBA.fromHex("#e06c75"),
-            fg: RGBA.fromHex("#e6edf3"),
+            ...DIFF_COLORS,
             width: "100%",
           });
           blockBox.add(diffRenderable);
@@ -1045,10 +951,7 @@ export async function runBootstrapPrompt(
 
     // Function to fetch available models and show model selection
     const showModelSelection = async (providerId: string) => {
-      // Show loading while fetching models
-      loadingText.content = "Fetching available models...";
-      viewState = { type: "loading" };
-      showView("loading");
+      showLoading("Fetching available models...");
 
       try {
         // Get providers with models
@@ -1059,19 +962,16 @@ export async function runBootstrapPrompt(
         const provider = providers.find((p: any) => p.id === providerId);
         const models: ModelOption[] = provider
           ? Object.entries(provider.models ?? {})
-              .filter(([_, m]: [string, any]) => m.status !== "deprecated")
-              .map(([id, m]: [string, any]) => ({
-                providerID: providerId,
-                modelID: id,
-                name: (m as any).name ?? id,
-              }))
+            .filter(([_, m]: [string, any]) => m.status !== "deprecated")
+            .map(([id, m]: [string, any]) => ({
+              providerID: providerId,
+              modelID: id,
+              name: (m as any).name ?? id,
+            }))
           : [];
 
         if (models.length === 0) {
-          // No models available, skip to intent prompt
-          viewState = { type: "intent-prompt" };
-          showView("intent-prompt");
-          intentInput.focus();
+          goToIntentPrompt();
           return;
         }
 
@@ -1087,10 +987,7 @@ export async function runBootstrapPrompt(
         showView("model-select");
         modelSelect.focus();
       } catch (err) {
-        // On error fetching models, skip to intent prompt
-        viewState = { type: "intent-prompt" };
-        showView("intent-prompt");
-        intentInput.focus();
+        goToIntentPrompt();
       }
     };
 
@@ -1107,11 +1004,7 @@ export async function runBootstrapPrompt(
         if (oauthAbort.signal.aborted) return;
 
         if (result.error) {
-          // Auth failed, go back to provider selection
-          viewState = { type: "provider-select", selectedIndex: 0 };
-          showView("provider-select");
-          providerSelect.setSelectedIndex(0);
-          providerSelect.focus();
+          goToProviderSelect();
           return;
         }
 
@@ -1122,20 +1015,13 @@ export async function runBootstrapPrompt(
         await showModelSelection(providerId);
       } catch (err) {
         if (oauthAbort.signal.aborted) return;
-        // On error, go back to provider selection
-        viewState = { type: "provider-select", selectedIndex: 0 };
-        showView("provider-select");
-        providerSelect.setSelectedIndex(0);
-        providerSelect.focus();
+        goToProviderSelect();
       }
     };
 
     // Function to select a provider and start auth
     const selectProvider = async (providerId: string) => {
-      // Show loading while fetching auth methods
-      loadingText.content = "Fetching auth methods...";
-      viewState = { type: "loading" };
-      showView("loading");
+      showLoading("Fetching auth methods...");
 
       // Get auth methods for this provider
       const authResponse = await client.provider.auth();
@@ -1147,12 +1033,7 @@ export async function runBootstrapPrompt(
         if (method.type === "oauth") {
           await startOAuth(providerId, 0, method.label);
         } else {
-          // API key
-          viewState = { type: "api-key", providerId };
-          showView("api-key");
-          apiKeyInput.focus();
-          apiKeyInput.value = "";
-          apiKeyErrorText.visible = false;
+          goToApiKeyView(providerId);
         }
       } else {
         // Multiple methods, show selection
@@ -1171,11 +1052,7 @@ export async function runBootstrapPrompt(
       });
 
       if (!result.data) {
-        // Failed to get auth URL, go back
-        viewState = { type: "provider-select", selectedIndex: 0 };
-        showView("provider-select");
-        providerSelect.setSelectedIndex(0);
-        providerSelect.focus();
+        goToProviderSelect();
         return;
       }
 
@@ -1216,21 +1093,17 @@ export async function runBootstrapPrompt(
 
       // Handle escape for going back
       if (evt.name === "escape") {
-        if (viewState.type === "auth-method-select" || viewState.type === "oauth-auto" ||
-            viewState.type === "oauth-code" || viewState.type === "api-key") {
+        const canGoBack = viewState.type === "auth-method-select" ||
+          viewState.type === "oauth-auto" ||
+          viewState.type === "oauth-code" ||
+          viewState.type === "api-key" ||
+          viewState.type === "model-select";
+
+        if (canGoBack) {
           if (viewState.type === "oauth-auto") {
             oauthAbort?.abort();
           }
-          viewState = { type: "provider-select", selectedIndex: 0 };
-          showView("provider-select");
-          providerSelect.setSelectedIndex(0);
-          providerSelect.focus();
-        } else if (viewState.type === "model-select") {
-          // Go back to provider selection from model selection
-          viewState = { type: "provider-select", selectedIndex: 0 };
-          showView("provider-select");
-          providerSelect.setSelectedIndex(0);
-          providerSelect.focus();
+          goToProviderSelect();
         }
       }
     });
@@ -1241,10 +1114,7 @@ export async function runBootstrapPrompt(
       if (!selected) return;
 
       if (selected.value === "skip") {
-        // Skip selected - go directly to intent prompt (no provider = no models)
-        viewState = { type: "intent-prompt" };
-        showView("intent-prompt");
-        intentInput.focus();
+        goToIntentPrompt();
       } else {
         // Provider selected - start auth flow
         await selectProvider(selected.value);
@@ -1264,12 +1134,7 @@ export async function runBootstrapPrompt(
       if (method.type === "oauth") {
         await startOAuth(viewState.providerId, methodIndex, method.label);
       } else {
-        // API key
-        viewState = { type: "api-key", providerId: viewState.providerId };
-        showView("api-key");
-        apiKeyInput.focus();
-        apiKeyInput.value = "";
-        apiKeyErrorText.visible = false;
+        goToApiKeyView(viewState.providerId);
       }
     });
 
@@ -1326,10 +1191,7 @@ export async function runBootstrapPrompt(
       // Store selected model
       selectedModel = selected.value as ModelOption;
 
-      // Proceed to intent prompt
-      viewState = { type: "intent-prompt" };
-      showView("intent-prompt");
-      intentInput.focus();
+      goToIntentPrompt();
     });
 
     // Handle intent input Enter
@@ -1387,12 +1249,7 @@ export async function runBootstrapPrompt(
     try {
       await waitForServer(serverUrl);
       client = createOpencodeClient({ baseUrl: serverUrl });
-
-      // Always show provider selection dialog
-      viewState = { type: "provider-select", selectedIndex: 0 };
-      showView("provider-select");
-      providerSelect.setSelectedIndex(0);
-      providerSelect.focus();
+      goToProviderSelect();
     } catch (err) {
       cleanupWithError(err);
     }

@@ -3,6 +3,9 @@ import { resolve, join, relative } from "path";
 import { homedir } from "os";
 import { mkdirSync, symlinkSync, existsSync, chmodSync } from "fs";
 import { buildSandboxCommand, type SandboxOptions } from "./sandbox";
+const { runBootstrapPrompt } = await import("./bootstrap-prompt");
+const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
+
 
 const OPENCODE_VERSION = "v1.1.37"
 const PYTHON_VERSION = "3.13.11";
@@ -653,47 +656,69 @@ Only create files, install packages, and generate AGENTS.md. Do not ask question
 }
 
 
+// Types for tool completion handling
+type ToolCompletionPart = {
+  tool: string;
+  state: {
+    status: string;
+    input?: Record<string, unknown>;
+    output?: string;
+    metadata?: Record<string, unknown>;
+    title?: string;
+  };
+  id: string;
+};
+
+function handleToolCompletion(
+  ui: import("./bootstrap-prompt").BootstrapUI,
+  part: ToolCompletionPart,
+): void {
+  const { state, tool } = part;
+  const output = state.output;
+  const input = state.input;
+  const metadata = state.metadata;
+  const title = state.title || tool;
+
+  if (tool === "bash" && output?.trim()) {
+    const command = (input?.command as string) || title;
+    const description = input?.description as string | undefined;
+    ui.showBashOutput(command, output, description);
+  } else if (tool === "write" && input?.filePath) {
+    ui.showWriteOutput(input.filePath as string, (input.content as string) || "");
+  } else if (tool === "edit" && metadata?.diff && input?.filePath) {
+    // edit tool: single file, filePath in input
+    ui.showEditOutput(input.filePath as string, metadata.diff as string);
+  } else if (tool === "apply_patch" && metadata?.diff) {
+    // apply_patch: multiple files, extract paths from metadata.files or use title
+    const files = metadata.files as Array<{ filePath?: string; relativePath?: string }> | undefined;
+    const filePath = files?.map(f => f.relativePath || f.filePath).join(", ") || title;
+    ui.showEditOutput(filePath, metadata.diff as string);
+  } else {
+    ui.appendToolStatus("completed", title);
+  }
+}
+
+async function autoApprovePermission(
+  client: import("@opencode-ai/sdk/v2").OpencodeClient,
+  ui: import("./bootstrap-prompt").BootstrapUI,
+  request: { id: string; permission: string; metadata?: Record<string, unknown>; patterns?: string[] },
+): Promise<void> {
+  const description = (request.metadata?.description as string) || (request.metadata?.filepath as string) || request.patterns?.[0] || "";
+  ui.appendText(`[Auto-approving ${request.permission}${description ? `: ${description}` : ""}]\n`);
+  await client.permission.reply({ requestID: request.id, reply: "once" });
+}
+
 async function bootstrapWithOpencode(
   prefix: string,
   workspacePath: string,
   userIntent: string,
   xdgEnv: Record<string, string>,
   ui: import("./bootstrap-prompt").BootstrapUI,
-  existingClient?: import("@opencode-ai/sdk/v2").OpencodeClient,
-  existingUrl?: string,
+  client: import("@opencode-ai/sdk/v2").OpencodeClient,
+  url: string,
   model?: { providerID: string; modelID: string },
 ): Promise<void> {
-  let client: import("@opencode-ai/sdk/v2").OpencodeClient;
-  let url: string;
-  let serverProc: ReturnType<typeof Bun.spawn> | null = null;
-
-  if (existingClient && existingUrl) {
-    // Use existing client from bootstrap prompt
-    client = existingClient;
-    url = existingUrl;
-    ui.setStatus("Sending bootstrap prompt...");
-  } else {
-    // Start new server (legacy path - should not be used in new flow)
-    const binDir = join(prefix, "bin");
-    const opencodePath = join(binDir, "opencode");
-    const port = 4096 + Math.floor(Math.random() * 1000);
-    url = `http://127.0.0.1:${port}`;
-
-    ui.setStatus(`Starting opencode server on port ${port}...`);
-
-    serverProc = Bun.spawn([opencodePath, "serve", "--port", String(port)], {
-      cwd: workspacePath,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, ...xdgEnv, PATH: buildPath(prefix) },
-    });
-
-    await waitForServer(url);
-    ui.setStatus("Sending bootstrap prompt...");
-
-    const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
-    client = createOpencodeClient({ baseUrl: url });
-  }
+  ui.setStatus("Sending bootstrap prompt...");
 
   const abort = new AbortController();
 
@@ -721,12 +746,7 @@ async function bootstrapWithOpencode(
             if (event.type === "permission.asked") {
               const request = event.properties;
               if (request.sessionID === sessionId) {
-                const description = request.metadata?.description || request.metadata?.filepath || request.patterns?.[0] || "";
-                ui.appendText(`[Auto-approving ${request.permission}${description ? `: ${description}` : ""}]\n`);
-                await client.permission.reply({
-                  requestID: request.id,
-                  reply: "once",
-                });
+                await autoApprovePermission(client, ui, request);
               }
             }
 
@@ -753,25 +773,11 @@ async function bootstrapWithOpencode(
                     ui.setStatus(`Running: ${title}`);
                     ui.appendToolStatus("running", title);
                   } else if (currentState === "completed") {
-                    const output = (part.state as any).output;
-                    const input = (part.state as any).input;
-                    const metadata = (part.state as any).metadata;
-
-                    // Show bash command output with BlockTool-style container
-                    if (part.tool === "bash" && output?.trim()) {
-                      const command = input?.command || title;
-                      const description = input?.description;
-                      ui.showBashOutput(command, output, description);
-                    } else if (part.tool === "write" && input?.filePath) {
-                      // Show write tool output with file content
-                      ui.showWriteOutput(input.filePath, input.content || "");
-                    } else if ((part.tool === "edit" || part.tool === "apply_patch") && metadata?.diff) {
-                      // Show edit tool output with diff
-                      ui.showEditOutput(input.filePath, metadata.diff);
-                    } else {
-                      // Other tools: show simple status
-                      ui.appendToolStatus("completed", title);
-                    }
+                    handleToolCompletion(ui, {
+                      tool: part.tool,
+                      state: part.state as ToolCompletionPart["state"],
+                      id: part.id,
+                    });
                   } else if (currentState === "error") {
                     const error = (part.state as any).error || "Unknown error";
                     ui.appendToolStatus("error", `${title}: ${error}`);
@@ -825,12 +831,7 @@ async function bootstrapWithOpencode(
 
     ui.setStatus("Bootstrap complete!");
   } finally {
-    // Cleanup
     abort.abort();
-    // Only kill server if we started it (not when using existing client)
-    if (serverProc) {
-      serverProc.kill();
-    }
   }
 }
 
@@ -887,7 +888,6 @@ async function install(prefix: string): Promise<void> {
     // Create scaffold without AGENTS.md - that will be generated by opencode
     await createWorkspaceScaffold(workspacePath, libraryName, packages, { skipAgentsMd: true });
     await syncWorkspace(prefix, workspacePath);
-    const { runBootstrapPrompt } = await import("./bootstrap-prompt");
 
     try {
       const result = await runBootstrapPrompt(
@@ -1107,8 +1107,11 @@ export {
   generateAgentsMd,
   generateOpencodeConfig,
   checkSandboxAvailability,
+  handleToolCompletion,
   WORKSPACE_PACKAGES,
 };
+
+export type { ToolCompletionPart };
 
 if (import.meta.main) {
   yargs(process.argv.slice(2))
