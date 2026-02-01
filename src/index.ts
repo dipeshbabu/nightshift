@@ -523,10 +523,15 @@ tests/                # Tests for library code
 `;
 }
 
+interface ScaffoldOptions {
+  skipAgentsMd?: boolean;
+}
+
 async function createWorkspaceScaffold(
   workspacePath: string,
   libraryName: string,
   packages: string[],
+  options: ScaffoldOptions = {},
 ): Promise<void> {
   console.log(`\nCreating workspace scaffold at ${workspacePath}...`);
   const snakeName = libraryName.replace(/-/g, "_");
@@ -542,7 +547,9 @@ async function createWorkspaceScaffold(
   await Bun.write(join(testsDir, "__init__.py"), "");
   await Bun.write(join(testsDir, "test_utils.py"), generateTestUtilsPy(libraryName));
   await Bun.write(join(workspacePath, "README.md"), generateReadme(libraryName));
-  await Bun.write(join(workspacePath, "AGENTS.md"), generateAgentsMd(libraryName));
+  if (!options.skipAgentsMd) {
+    await Bun.write(join(workspacePath, "AGENTS.md"), generateAgentsMd(libraryName));
+  }
   await Bun.write(join(workspacePath, "opencode.json"), generateOpencodeConfig());
 
   console.log(`  Created workspace scaffold with library "${libraryName}"`);
@@ -588,6 +595,230 @@ async function installUvTools(prefix: string): Promise<void> {
 }
 
 
+function buildPath(prefix: string): string {
+  const binDir = join(prefix, "bin");
+  const uvToolsBin = join(prefix, "uv-tools", "bin");
+  let pathParts = [binDir];
+  if (existsSync(uvToolsBin)) pathParts.unshift(uvToolsBin);
+  return `${pathParts.join(":")}:${process.env.PATH ?? ""}`;
+}
+
+
+async function waitForServer(url: string, maxAttempts = 30): Promise<void> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const response = await fetch(`${url}/global/health`);
+      if (response.ok) return;
+    } catch {
+      // Server not ready yet
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("Server failed to start within timeout");
+}
+
+
+function buildBootstrapPrompt(userIntent: string): string {
+  return `
+You are bootstrapping a new workspace for the user. Their stated purpose is:
+"${userIntent}"
+
+Your task:
+1. **Install packages**: Run \`uv add <packages>\` to install Python libraries appropriate for this use case
+2. **Create library structure**: Add modules to src/agent_lib/ that will help with the stated purpose
+3. **Generate AGENTS.md**: Create an AGENTS.md file following these best practices:
+
+## AGENTS.md Guidelines (keep under 150 lines):
+
+### Required Sections:
+- **Project Overview**: One-sentence description tailored to "${userIntent}"
+- **Commands**: Exact commands for build, test, run (use bun, uv, pytest)
+- **Tech Stack**: Python 3.13, Bun, uv, and installed packages
+- **Project Structure**: Key file paths and their purposes
+- **Code Style**: Formatting rules, design patterns (use ruff, black)
+- **Do's and Don'ts**: Specific, actionable guidelines for this use case
+- **Safety Boundaries**:
+  - Always do: Read files, run tests, format code
+  - Ask first: Install new packages, modify pyproject.toml
+  - Never do: Delete data, run destructive commands
+
+### Style Guidelines:
+- Be specific, not vague
+- Use code examples, not descriptions
+- Make commands copy-pasteable
+- Prioritize capabilities over file structure
+
+Only create files, install packages, and generate AGENTS.md. Do not ask questions.
+`.trim();
+}
+
+
+async function bootstrapWithOpencode(
+  prefix: string,
+  workspacePath: string,
+  userIntent: string,
+  xdgEnv: Record<string, string>,
+  ui: import("./bootstrap-prompt").BootstrapUI,
+): Promise<void> {
+  const binDir = join(prefix, "bin");
+  const opencodePath = join(binDir, "opencode");
+
+  // Start opencode server 
+  const port = 4096 + Math.floor(Math.random() * 1000);
+  const url = `http://127.0.0.1:${port}`;
+
+  ui.setStatus(`Starting opencode server on port ${port}...`);
+
+  const serverProc = Bun.spawn([opencodePath, "serve", "--port", String(port)], {
+    cwd: workspacePath,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, ...xdgEnv, PATH: buildPath(prefix) },
+  });
+
+  const abort = new AbortController();
+
+  try {
+    //  Wait for server ready
+    await waitForServer(url);
+    ui.setStatus("Sending bootstrap prompt...");
+
+    // Import SDK client 
+    const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
+    const client = createOpencodeClient({ baseUrl: url });
+
+    // Create session
+    const session = await client.session.create({ title: "Bootstrap" });
+    if (!session.data) {
+      throw new Error("Failed to create session");
+    }
+    const sessionId = session.data.id;
+
+    // Track tool states to avoid duplicate output
+    const toolStates = new Map<string, string>();
+
+    // Set up event handling for permissions and streaming output
+    const sessionComplete = new Promise<void>((resolve, reject) => {
+      (async () => {
+        try {
+          const events = await client.event.subscribe({}, { signal: abort.signal });
+
+          for await (const event of events.stream) {
+            // Auto-approve all permission requests during bootstrap
+            // TODO: we should not do this
+            if (event.type === "permission.asked") {
+              const request = event.properties;
+              if (request.sessionID === sessionId) {
+                const description = request.metadata?.description || request.metadata?.filepath || request.patterns?.[0] || "";
+                ui.appendText(`[Auto-approving ${request.permission}${description ? `: ${description}` : ""}]\n`);
+                await client.permission.reply({
+                  requestID: request.id,
+                  reply: "once",
+                });
+              }
+            }
+
+            // Stream text output
+            if (event.type === "message.part.updated") {
+              const { part, delta } = event.properties;
+              if (part.sessionID !== sessionId) continue;
+
+              // Stream text deltas
+              if (part.type === "text" && delta) {
+                ui.appendText(delta);
+              }
+
+              // Show tool execution status
+              if (part.type === "tool") {
+                const prevState = toolStates.get(part.id);
+                const currentState = part.state.status;
+
+                if (prevState !== currentState) {
+                  toolStates.set(part.id, currentState);
+                  const title = (part.state as any).title || part.tool;
+
+                  if (currentState === "running") {
+                    ui.setStatus(`Running: ${title}`);
+                    ui.appendToolStatus("running", title);
+                  } else if (currentState === "completed") {
+                    const output = (part.state as any).output;
+                    const input = (part.state as any).input;
+                    const metadata = (part.state as any).metadata;
+
+                    // Show bash command output with BlockTool-style container
+                    if (part.tool === "bash" && output?.trim()) {
+                      const command = input?.command || title;
+                      const description = input?.description;
+                      ui.showBashOutput(command, output, description);
+                    } else if (part.tool === "write" && input?.filePath) {
+                      // Show write tool output with file content
+                      ui.showWriteOutput(input.filePath, input.content || "");
+                    } else if (part.tool === "edit" && metadata?.diff) {
+                      // Show edit tool output with diff
+                      ui.showEditOutput(input.filePath, metadata.diff);
+                    } else {
+                      // Other tools: show simple status
+                      ui.appendToolStatus("completed", title);
+                    }
+                  } else if (currentState === "error") {
+                    const error = (part.state as any).error || "Unknown error";
+                    ui.appendToolStatus("error", `${title}: ${error}`);
+                  }
+                }
+              }
+            }
+
+            // Handle session diffs (file changes)
+            if (event.type === "session.diff") {
+              const { sessionID, diff } = event.properties;
+              if (sessionID === sessionId && diff && diff.length > 0) {
+                ui.showDiff(diff);
+              }
+            }
+
+            // Check if session is idle (completed)
+            if (event.type === "session.idle" && event.properties.sessionID === sessionId) {
+              resolve();
+              return;
+            }
+
+            // Handle session errors
+            if (event.type === "session.error" && (event.properties as any).sessionID === sessionId) {
+              reject(new Error(`Session error: ${JSON.stringify(event.properties)}`));
+              return;
+            }
+          }
+        } catch (err) {
+          if (!abort.signal.aborted) {
+            reject(err);
+          }
+        }
+      })();
+    });
+
+    // Send bootstrap prompt asynchronously
+    const prompt = buildBootstrapPrompt(userIntent);
+    await client.session.promptAsync({
+      sessionID: sessionId,
+      parts: [{ type: "text", text: prompt }],
+    });
+
+    const timeout = new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error("Bootstrap timed out after 5 minutes")), 5 * 60 * 1000);
+    });
+
+    // Wait for session to complete...timeout after 5 minutes
+    await Promise.race([sessionComplete, timeout]);
+
+    ui.setStatus("Bootstrap complete!");
+  } finally {
+    //Cleanup
+    abort.abort();
+    serverProc.kill();
+  }
+}
+
+
 async function install(prefix: string): Promise<void> {
   prefix = resolve(prefix);
   console.log(`Installing nightshift tools to ${prefix}`);
@@ -626,21 +857,45 @@ async function install(prefix: string): Promise<void> {
   const libraryName = config?.libraryName ?? "agent_lib";
   const packages = config?.workspacePackages ?? WORKSPACE_PACKAGES;
 
-  if (!existsSync(workspacePath)) {
-    await createWorkspaceScaffold(workspacePath, libraryName, packages);
-    await syncWorkspace(prefix, workspacePath);
-  }
-
   // Create XDG directories for isolated opencode config/data/cache/state
   const xdgDirs = ["config", "share", "cache", "state"];
   for (const dir of xdgDirs) {
     mkdirSync(join(prefix, dir), { recursive: true });
   }
 
+  const xdgEnv = buildXdgEnv(prefix);
+
+  const isNewWorkspace = !existsSync(workspacePath);
+
+  if (isNewWorkspace) {
+    // Create scaffold without AGENTS.md - that will be generated by opencode
+    await createWorkspaceScaffold(workspacePath, libraryName, packages, { skipAgentsMd: true });
+    await syncWorkspace(prefix, workspacePath);
+    const { runBootstrapPrompt } = await import("./bootstrap-prompt");
+
+    try {
+      const intent = await runBootstrapPrompt(async (userIntent, ui) => {
+        await bootstrapWithOpencode(prefix, workspacePath, userIntent, xdgEnv, ui);
+      });
+
+      if (!intent) {
+        // User skipped (Ctrl+C)
+        console.log("\nSkipped bootstrap. Using default AGENTS.md.");
+        await Bun.write(join(workspacePath, "AGENTS.md"), generateAgentsMd(libraryName));
+      }
+    } catch (err) {
+      console.error("\nBootstrap failed:", err);
+      console.log("Falling back to default AGENTS.md.");
+      await Bun.write(join(workspacePath, "AGENTS.md"), generateAgentsMd(libraryName));
+    }
+  } else {
+    console.log(`\nWorkspace already exists at ${workspacePath}`);
+  }
+
   // Save active prefix for future runs
   await saveActivePrefix(prefix);
 
-  console.log("Installation complete!");
+  console.log("\nInstallation complete!");
   console.log(`  Prefix: ${prefix}`);
   console.log(`  Workspace: ${workspacePath}`);
   console.log(`  Run: bun ${__filename} run`);
@@ -816,6 +1071,9 @@ export {
   resolveRunOptions,
   buildAttachTuiArgs,
   buildXdgEnv,
+  buildPath,
+  buildBootstrapPrompt,
+  waitForServer,
   generateRootPyproject,
   generateUtilsPy,
   generateTestUtilsPy,
