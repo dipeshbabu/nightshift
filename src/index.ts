@@ -436,7 +436,7 @@ function generateOpencodeConfig(): string {
       "todoread": "allow",
       "question": "allow"
     },
-    "plugin": ["@processmesh-plugins/email"]
+    "plugin": ["@processmesh-plugins/email", "opencode-scheduler"]
   }, null, 2);
 }
 
@@ -628,7 +628,9 @@ You are bootstrapping a new workspace for the user. Their stated purpose is:
 
 ## Important: Interview the User
 
-Before taking any action, interview the user extensively to understand their needs:
+If asked to read from a BOOT.md file, you must read it first. There will be information useful for you to help the user.
+
+Before taking any action outside of reading the BOOT.md, interview the user extensively to understand their needs:
 - What specific problems are they trying to solve?
 - What data sources will they work with?
 - What are their preferred tools or libraries?
