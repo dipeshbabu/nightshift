@@ -726,7 +726,7 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPA
   const { tui } = await import("./cli/cmd/tui/tui/app");
 
   try {
-    await tui({ url, args: {}, directory: process.cwd() });
+    await tui({ url, args: {}, directory: workspacePath });
   } finally {
     // Clean up server when TUI exits
     serverProc.kill();
