@@ -659,33 +659,45 @@ async function bootstrapWithOpencode(
   userIntent: string,
   xdgEnv: Record<string, string>,
   ui: import("./bootstrap-prompt").BootstrapUI,
+  existingClient?: import("@opencode-ai/sdk/v2").OpencodeClient,
+  existingUrl?: string,
+  model?: { providerID: string; modelID: string },
 ): Promise<void> {
-  const binDir = join(prefix, "bin");
-  const opencodePath = join(binDir, "opencode");
+  let client: import("@opencode-ai/sdk/v2").OpencodeClient;
+  let url: string;
+  let serverProc: ReturnType<typeof Bun.spawn> | null = null;
 
-  // Start opencode server 
-  const port = 4096 + Math.floor(Math.random() * 1000);
-  const url = `http://127.0.0.1:${port}`;
+  if (existingClient && existingUrl) {
+    // Use existing client from bootstrap prompt
+    client = existingClient;
+    url = existingUrl;
+    ui.setStatus("Sending bootstrap prompt...");
+  } else {
+    // Start new server (legacy path - should not be used in new flow)
+    const binDir = join(prefix, "bin");
+    const opencodePath = join(binDir, "opencode");
+    const port = 4096 + Math.floor(Math.random() * 1000);
+    url = `http://127.0.0.1:${port}`;
 
-  ui.setStatus(`Starting opencode server on port ${port}...`);
+    ui.setStatus(`Starting opencode server on port ${port}...`);
 
-  const serverProc = Bun.spawn([opencodePath, "serve", "--port", String(port)], {
-    cwd: workspacePath,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, ...xdgEnv, PATH: buildPath(prefix) },
-  });
+    serverProc = Bun.spawn([opencodePath, "serve", "--port", String(port)], {
+      cwd: workspacePath,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ...xdgEnv, PATH: buildPath(prefix) },
+    });
+
+    await waitForServer(url);
+    ui.setStatus("Sending bootstrap prompt...");
+
+    const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
+    client = createOpencodeClient({ baseUrl: url });
+  }
 
   const abort = new AbortController();
 
   try {
-    //  Wait for server ready
-    await waitForServer(url);
-    ui.setStatus("Sending bootstrap prompt...");
-
-    // Import SDK client 
-    const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
-    const client = createOpencodeClient({ baseUrl: url });
 
     // Create session
     const session = await client.session.create({ title: "Bootstrap" });
@@ -753,7 +765,7 @@ async function bootstrapWithOpencode(
                     } else if (part.tool === "write" && input?.filePath) {
                       // Show write tool output with file content
                       ui.showWriteOutput(input.filePath, input.content || "");
-                    } else if (part.tool === "edit" && metadata?.diff) {
+                    } else if ((part.tool === "edit" || part.tool === "apply_patch") && metadata?.diff) {
                       // Show edit tool output with diff
                       ui.showEditOutput(input.filePath, metadata.diff);
                     } else {
@@ -800,6 +812,7 @@ async function bootstrapWithOpencode(
     const prompt = buildBootstrapPrompt(userIntent);
     await client.session.promptAsync({
       sessionID: sessionId,
+      model: model,
       parts: [{ type: "text", text: prompt }],
     });
 
@@ -812,9 +825,12 @@ async function bootstrapWithOpencode(
 
     ui.setStatus("Bootstrap complete!");
   } finally {
-    //Cleanup
+    // Cleanup
     abort.abort();
-    serverProc.kill();
+    // Only kill server if we started it (not when using existing client)
+    if (serverProc) {
+      serverProc.kill();
+    }
   }
 }
 
@@ -874,14 +890,24 @@ async function install(prefix: string): Promise<void> {
     const { runBootstrapPrompt } = await import("./bootstrap-prompt");
 
     try {
-      const intent = await runBootstrapPrompt(async (userIntent, ui) => {
-        await bootstrapWithOpencode(prefix, workspacePath, userIntent, xdgEnv, ui);
-      });
+      const result = await runBootstrapPrompt(
+        async (userIntent, ui, client, serverUrl, model) => {
+          await bootstrapWithOpencode(prefix, workspacePath, userIntent, xdgEnv, ui, client, serverUrl, model);
+        },
+        {
+          prefix,
+          workspacePath,
+          xdgEnv,
+        }
+      );
 
-      if (!intent) {
+      if (!result) {
         // User skipped (Ctrl+C)
         console.log("\nSkipped bootstrap. Using default AGENTS.md.");
         await Bun.write(join(workspacePath, "AGENTS.md"), generateAgentsMd(libraryName));
+      } else {
+        // Kill the server process after bootstrap
+        result.serverProc.kill();
       }
     } catch (err) {
       console.error("\nBootstrap failed:", err);
