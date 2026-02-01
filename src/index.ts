@@ -2,6 +2,7 @@ import yargs from "yargs";
 import { resolve, join, relative } from "path";
 import { homedir } from "os";
 import { mkdirSync, symlinkSync, existsSync, chmodSync } from "fs";
+import { buildSandboxCommand, type SandboxOptions } from "./sandbox";
 
 const OPENCODE_VERSION = "v1.1.37"
 const PYTHON_VERSION = "3.13.11";
@@ -148,10 +149,11 @@ function extractExtraArgs(argv: string[]): string[] {
 function resolveRunOptions(
   argv: { [key: string]: unknown },
   processArgv: string[],
-): { extra: string[]; useNightshiftTui: boolean } {
+): { extra: string[]; useNightshiftTui: boolean; sandboxEnabled: boolean } {
   return {
     extra: extractExtraArgs(processArgv),
     useNightshiftTui: Boolean(argv["run-nightshift-tui"]),
+    sandboxEnabled: Boolean(argv["sandbox"]),
   };
 }
 
@@ -173,6 +175,34 @@ function buildXdgEnv(prefix: string): Record<string, string> {
     XDG_DATA_HOME: join(prefix, "share"),
     XDG_CACHE_HOME: join(prefix, "cache"),
     XDG_STATE_HOME: join(prefix, "state"),
+  };
+}
+
+async function checkSandboxAvailability(): Promise<{ available: boolean; reason?: string }> {
+  if (process.platform === "darwin") {
+    // macOS has sandbox-exec built-in
+    return { available: true };
+  }
+
+  if (process.platform === "linux") {
+    // Check if bwrap is available in PATH
+    const proc = Bun.spawn(["which", "bwrap"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    if (exitCode === 0) {
+      return { available: true };
+    }
+    return {
+      available: false,
+      reason: "bwrap (bubblewrap) not found in PATH. Install it with: apt install bubblewrap (Debian/Ubuntu) or dnf install bubblewrap (Fedora)",
+    };
+  }
+
+  return {
+    available: false,
+    reason: "Sandbox is not supported on this platform",
   };
 }
 
@@ -617,7 +647,7 @@ async function install(prefix: string): Promise<void> {
 }
 
 
-async function run(prefix: string, args: string[], useNightshiftTui: boolean): Promise<void> {
+async function run(prefix: string, args: string[], useNightshiftTui: boolean, sandboxEnabled: boolean): Promise<void> {
   prefix = resolve(prefix);
   const binDir = join(prefix, "bin");
   const uvToolsBin = join(prefix, "uv-tools", "bin");
@@ -625,6 +655,15 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
 
   if (!existsSync(opencode)) {
     throw new Error(`opencode not found at ${opencode}. Run install first.`);
+  }
+
+  // Check sandbox availability if requested
+  if (sandboxEnabled) {
+    const sandboxCheck = await checkSandboxAvailability();
+    if (!sandboxCheck.available) {
+      throw new Error(`Sandbox requested but not available: ${sandboxCheck.reason}`);
+    }
+    console.log("Sandbox mode enabled");
   }
 
   // Compute workspace paths
@@ -648,9 +687,26 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
 
   const xdgEnv = buildXdgEnv(prefix);
 
+  // Build sandbox options
+  const sandboxOpts: SandboxOptions = {
+    workspacePath,
+    prefixPath: prefix,
+    binDir,
+    env: {
+      ...xdgEnv,
+      PATH,
+      PYTHONPATH,
+      HOME: process.env.HOME ?? "",
+      USER: process.env.USER ?? "",
+      TERM: process.env.TERM ?? "xterm-256color",
+      LANG: process.env.LANG ?? "en_US.UTF-8",
+      OPENCODE_EXPERIMENTAL_LSP_TY: "true",
+    },
+  };
+
   if (useNightshiftTui) {
     // Start opencode as a server and attach nightshift TUI
-    await runWithNightshiftTui(opencode, PATH, PYTHONPATH, workspacePath, args, xdgEnv);
+    await runWithNightshiftTui(opencode, PATH, PYTHONPATH, workspacePath, args, xdgEnv, sandboxEnabled, sandboxOpts);
   } else {
     // Standard opencode execution
     console.log(`Launching opencode with isolated PATH`);
@@ -659,12 +715,17 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
       console.log(`  PYTHONPATH includes: ${workspaceSrc}`);
     }
 
-    const proc = Bun.spawn([opencode, ...args], {
+    const baseCommand = [opencode, ...args];
+    const finalCommand = sandboxEnabled
+      ? buildSandboxCommand(baseCommand, sandboxOpts)
+      : baseCommand;
+
+    const proc = Bun.spawn(finalCommand, {
       cwd: workspacePath,
       stdout: "inherit",
       stderr: "inherit",
       stdin: "inherit",
-      env: {
+      env: sandboxEnabled ? sandboxOpts.env : {
         ...process.env,
         ...xdgEnv,
         PATH,
@@ -678,19 +739,25 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean): P
   }
 }
 
-async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPATH: string, workspacePath: string, _args: string[], xdgEnv: Record<string, string>): Promise<void> {
+async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPATH: string, workspacePath: string, _args: string[], xdgEnv: Record<string, string>, sandboxEnabled: boolean, sandboxOpts: SandboxOptions): Promise<void> {
   // Find an available port
   const port = 4096 + Math.floor(Math.random() * 1000);
   const url = `http://127.0.0.1:${port}`;
 
   console.log(`Starting opencode server on port ${port}...`);
 
+  // Build server command
+  const baseServerCommand = [opencodePath, "serve", "--port", String(port)];
+  const finalServerCommand = sandboxEnabled
+    ? buildSandboxCommand(baseServerCommand, sandboxOpts)
+    : baseServerCommand;
+
   // Start opencode as a server
-  const serverProc = Bun.spawn([opencodePath, "serve", "--port", String(port)], {
+  const serverProc = Bun.spawn(finalServerCommand, {
     cwd: workspacePath,
     stdout: "pipe",
     stderr: "pipe",
-    env: {
+    env: sandboxEnabled ? sandboxOpts.env : {
       ...process.env,
       ...xdgEnv,
       PATH,
@@ -755,6 +822,7 @@ export {
   generateReadme,
   generateAgentsMd,
   generateOpencodeConfig,
+  checkSandboxAvailability,
   WORKSPACE_PACKAGES,
 };
 
@@ -791,19 +859,24 @@ if (import.meta.main) {
             type: "boolean",
             default: false,
             describe: "Use Nightshift TUI instead of default opencode",
+          })
+          .option("sandbox", {
+            type: "boolean",
+            default: false,
+            describe: "Run in sandbox mode (read-only host filesystem, writable workspace)",
           }),
       async (argv) => {
         try {
-          const { extra, useNightshiftTui } = resolveRunOptions(argv, process.argv);
+          const { extra, useNightshiftTui, sandboxEnabled } = resolveRunOptions(argv, process.argv);
           if (argv.prefix) {
             await saveActivePrefix(argv.prefix);
-            await run(argv.prefix, extra, useNightshiftTui);
+            await run(argv.prefix, extra, useNightshiftTui, sandboxEnabled);
             return;
           }
 
           const resolved = await resolvePrefixFromConfig(process.cwd());
           console.log(`Using prefix from ${resolved.source}`);
-          await run(resolved.prefix, extra, useNightshiftTui);
+          await run(resolved.prefix, extra, useNightshiftTui, sandboxEnabled);
         } catch (err) {
           console.error("Run failed:", err);
           process.exit(1);
@@ -814,18 +887,23 @@ if (import.meta.main) {
       "$0",
       "Launch opencode using nightshift.json",
       (y) =>
-
-        y.option("run-nightshift-tui", {
-          type: "boolean",
-          default: false,
-          describe: "Use Nightshift TUI instead of default opencode",
-        }),
+        y
+          .option("run-nightshift-tui", {
+            type: "boolean",
+            default: false,
+            describe: "Use Nightshift TUI instead of default opencode",
+          })
+          .option("sandbox", {
+            type: "boolean",
+            default: false,
+            describe: "Run in sandbox mode (read-only host filesystem, writable workspace)",
+          }),
       async (argv) => {
         try {
-          const { extra, useNightshiftTui } = resolveRunOptions(argv, process.argv);
+          const { extra, useNightshiftTui, sandboxEnabled } = resolveRunOptions(argv, process.argv);
           const resolved = await resolvePrefixFromConfig(process.cwd());
           console.log(`Using prefix from ${resolved.source}`);
-          await run(resolved.prefix, extra, useNightshiftTui);
+          await run(resolved.prefix, extra, useNightshiftTui, sandboxEnabled);
         } catch (err) {
           console.error("Run failed:", err);
           process.exit(1);

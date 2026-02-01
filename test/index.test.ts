@@ -19,6 +19,7 @@ import {
   generateReadme,
   generateAgentsMd,
   generateOpencodeConfig,
+  checkSandboxAvailability,
   WORKSPACE_PACKAGES,
 } from "../src/index";
 
@@ -68,6 +69,18 @@ test("resolveRunOptions captures tui flag and extra args", () => {
   const result = resolveRunOptions(argv, ["bun", "src/index.ts", "--", "serve"]);
   expect(result.useNightshiftTui).toBe(true);
   expect(result.extra).toEqual(["serve"]);
+});
+
+test("resolveRunOptions captures sandbox flag", () => {
+  const argv = { sandbox: true };
+  const result = resolveRunOptions(argv, ["bun", "src/index.ts"]);
+  expect(result.sandboxEnabled).toBe(true);
+});
+
+test("resolveRunOptions sandbox defaults to false", () => {
+  const argv = {};
+  const result = resolveRunOptions(argv, ["bun", "src/index.ts"]);
+  expect(result.sandboxEnabled).toBe(false);
 });
 
 test("buildAttachTuiArgs includes session when provided", () => {
@@ -270,4 +283,20 @@ test("buildXdgEnv works with different prefix paths", () => {
   expect(xdgEnv.XDG_DATA_HOME).toBe("/tmp/test-nightshift/share");
   expect(xdgEnv.XDG_CACHE_HOME).toBe("/tmp/test-nightshift/cache");
   expect(xdgEnv.XDG_STATE_HOME).toBe("/tmp/test-nightshift/state");
+});
+
+test("checkSandboxAvailability returns available on darwin", async () => {
+  if (process.platform === "darwin") {
+    const result = await checkSandboxAvailability();
+    expect(result.available).toBe(true);
+    expect(result.reason).toBeUndefined();
+  }
+});
+
+test("checkSandboxAvailability returns object with available property", async () => {
+  const result = await checkSandboxAvailability();
+  expect(typeof result.available).toBe("boolean");
+  if (!result.available) {
+    expect(typeof result.reason).toBe("string");
+  }
 });
