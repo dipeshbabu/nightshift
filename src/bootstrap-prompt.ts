@@ -1032,9 +1032,7 @@ export async function runBootstrapPrompt(
           questionSelect.setSelectedIndex(0);
           questionSelect.visible = true;
           questionCustomInput.visible = false;
-          questionHelpText.content = question.multiple
-            ? "Use ↑/↓ to select, Space to toggle, Enter to confirm"
-            : "Use ↑/↓ to select, Enter to confirm";
+          questionHelpText.content = "Use ↑/↓ to select, Enter to confirm";
 
           // Transition to question view
           viewState = {
