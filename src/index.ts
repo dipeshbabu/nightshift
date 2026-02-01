@@ -626,7 +626,19 @@ function buildBootstrapPrompt(userIntent: string): string {
 You are bootstrapping a new workspace for the user. Their stated purpose is:
 "${userIntent}"
 
-Your task:
+## Important: Interview the User
+
+Before taking any action, interview the user extensively to understand their needs:
+- What specific problems are they trying to solve?
+- What data sources will they work with?
+- What are their preferred tools or libraries?
+- What is their experience level with Python?
+- Any specific requirements or constraints?
+
+Use the AskUserQuestion tool to gather this information. Ask 2-4 focused questions before proceeding.
+
+## After gathering information:
+
 1. **Install packages**: Run \`uv add <packages>\` to install Python libraries appropriate for this use case
 2. **Create library structure**: Add modules to src/agent_lib/ that will help with the stated purpose
 3. **Generate AGENTS.md**: Create an AGENTS.md file following these best practices:
@@ -650,8 +662,6 @@ Your task:
 - Use code examples, not descriptions
 - Make commands copy-pasteable
 - Prioritize capabilities over file structure
-
-Only create files, install packages, and generate AGENTS.md. Do not ask questions.
 `.trim();
 }
 
@@ -791,6 +801,25 @@ async function bootstrapWithOpencode(
               const { sessionID, diff } = event.properties;
               if (sessionID === sessionId && diff && diff.length > 0) {
                 ui.showDiff(diff);
+              }
+            }
+
+            // Handle question events
+            if (event.type === "question.asked") {
+              const request = event.properties;
+              if (request.sessionID === sessionId) {
+                try {
+                  const answers = await ui.showQuestion(request);
+                  await client.question.reply({
+                    requestID: request.id,
+                    answers,
+                  });
+                } catch (err) {
+                  // User rejected/cancelled the question
+                  await client.question.reject({
+                    requestID: request.id,
+                  });
+                }
               }
             }
 

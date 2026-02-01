@@ -16,7 +16,7 @@ import { createFrames, createColors } from "./cli/cmd/tui/tui/ui/spinner";
 import stripAnsi from "strip-ansi";
 import { join } from "path";
 import open from "open";
-import type { OpencodeClient } from "@opencode-ai/sdk/v2";
+import type { OpencodeClient, QuestionRequest, QuestionAnswer } from "@opencode-ai/sdk/v2";
 
 // Colors for the bootstrap UI
 const COLORS = {
@@ -48,6 +48,9 @@ export interface FileDiff {
   deletions: number;
 }
 
+// Re-export question types for external use
+export type { QuestionRequest, QuestionAnswer } from "@opencode-ai/sdk/v2";
+
 export interface BootstrapUI {
   appendText: (text: string) => void;
   appendToolStatus: (status: "running" | "completed" | "error", text: string) => void;
@@ -57,6 +60,8 @@ export interface BootstrapUI {
   showWriteOutput: (filePath: string, content: string) => void;
   showEditOutput: (filePath: string, diff: string) => void;
   setSpinnerActive: (active: boolean) => void;
+  /** Display a question to the user and get their response */
+  showQuestion: (request: QuestionRequest) => Promise<QuestionAnswer[]>;
 }
 
 export interface BootstrapPromptOptions {
@@ -215,7 +220,8 @@ type ViewState =
   | { type: "api-key"; providerId: string; error?: boolean }
   | { type: "model-select"; models: ModelOption[] }
   | { type: "intent-prompt" }
-  | { type: "bootstrap-output" };
+  | { type: "bootstrap-output" }
+  | { type: "question"; request: QuestionRequest; resolve: (answers: QuestionAnswer[]) => void; reject: (err: Error) => void; currentQuestionIndex: number; answers: QuestionAnswer[]; customInputActive: boolean; selectedIndex: number };
 
 /**
  * Shows a TUI prompt for provider selection, model selection, and user intent.
@@ -276,6 +282,7 @@ export async function runBootstrapPrompt(
     let modelSelectContainer: BoxRenderable;
     let intentContainer: BoxRenderable;
     let outputContainer: BoxRenderable;
+    let questionContainer: BoxRenderable;
 
     // UI elements we need to update
     let providerSelect: SelectRenderable;
@@ -291,6 +298,11 @@ export async function runBootstrapPrompt(
     let apiKeyErrorText: TextRenderable;
     let modelSelect: SelectRenderable;
     let intentInput: InputRenderable;
+    let questionHeaderText: TextRenderable;
+    let questionLabel: TextRenderable;
+    let questionSelect: SelectRenderable;
+    let questionCustomInput: InputRenderable;
+    let questionHelpText: TextRenderable;
 
     // Track selected model
     let selectedModel: ModelOption | null = null;
@@ -618,6 +630,49 @@ export async function runBootstrapPrompt(
     intentContainer.add(intentInput);
     intentContainer.add(intentHelpText);
 
+    // Question container for agent questions during bootstrap
+    questionContainer = createViewContainer("question-container");
+
+    questionHeaderText = new TextRenderable(renderer, {
+      id: "question-header",
+      content: "",
+      fg: COLORS.textMuted,
+    });
+
+    questionLabel = new TextRenderable(renderer, {
+      id: "question-label",
+      content: "",
+      fg: COLORS.primary,
+    });
+
+    questionSelect = new SelectRenderable(renderer, {
+      id: "question-select",
+      options: [],
+      width: 60,
+      height: 6,
+      ...SELECT_STYLE,
+    });
+
+    questionCustomInput = new InputRenderable(renderer, {
+      id: "question-custom-input",
+      width: 60,
+      placeholder: "Type your answer...",
+      visible: false,
+      ...INPUT_STYLE,
+    });
+
+    questionHelpText = new TextRenderable(renderer, {
+      id: "question-help",
+      content: "Use ↑/↓ to select, Enter to confirm, or type a custom answer",
+      fg: COLORS.textMuted,
+    });
+
+    questionContainer.add(questionHeaderText);
+    questionContainer.add(questionLabel);
+    questionContainer.add(questionSelect);
+    questionContainer.add(questionCustomInput);
+    questionContainer.add(questionHelpText);
+
     outputContainer = new BoxRenderable(renderer, {
       id: "output-container",
       flexDirection: "column",
@@ -671,6 +726,7 @@ export async function runBootstrapPrompt(
     container.add(apiKeyContainer);
     container.add(modelSelectContainer);
     container.add(intentContainer);
+    container.add(questionContainer);
     container.add(outputContainer);
 
     renderer.root.add(container);
@@ -685,6 +741,7 @@ export async function runBootstrapPrompt(
       "api-key": apiKeyContainer,
       "model-select": modelSelectContainer,
       "intent-prompt": intentContainer,
+      "question": questionContainer,
       "bootstrap-output": outputContainer,
     };
 
@@ -944,6 +1001,110 @@ export async function runBootstrapPrompt(
       setSpinnerActive: (active: boolean) => {
         spinner.visible = active;
       },
+      showQuestion: (request: QuestionRequest): Promise<QuestionAnswer[]> => {
+        return new Promise((resolve, reject) => {
+          // Initialize question state
+          const currentQuestionIndex = 0;
+          const answers: QuestionAnswer[] = [];
+          const question = request.questions[currentQuestionIndex];
+
+          // Set up UI for first question
+          questionHeaderText.content = question.header;
+          questionLabel.content = `:> ${question.question}`;
+
+          // Build options including "Type your own answer" if custom is allowed (default: true)
+          const allowCustom = question.custom !== false;
+          type QuestionSelectValue = { type: "option" | "custom"; index: number; label: string };
+          const selectOptions: Array<{ name: string; description: string; value: QuestionSelectValue }> = question.options.map((opt, idx) => ({
+            name: opt.label,
+            description: opt.description,
+            value: { type: "option", index: idx, label: opt.label },
+          }));
+          if (allowCustom) {
+            selectOptions.push({
+              name: "Other",
+              description: "Type your own answer",
+              value: { type: "custom", index: -1, label: "" },
+            });
+          }
+
+          questionSelect.options = selectOptions;
+          questionSelect.setSelectedIndex(0);
+          questionSelect.visible = true;
+          questionCustomInput.visible = false;
+          questionHelpText.content = question.multiple
+            ? "Use ↑/↓ to select, Space to toggle, Enter to confirm"
+            : "Use ↑/↓ to select, Enter to confirm";
+
+          // Transition to question view
+          viewState = {
+            type: "question",
+            request,
+            resolve,
+            reject,
+            currentQuestionIndex,
+            answers,
+            customInputActive: false,
+            selectedIndex: 0,
+          };
+          showView("question");
+          questionSelect.focus();
+        });
+      },
+    };
+
+    // Helper to process current question answer and move to next or complete
+    const processQuestionAnswer = (answer: QuestionAnswer) => {
+      if (viewState.type !== "question") return;
+
+      const { request, resolve, currentQuestionIndex, answers } = viewState;
+      answers.push(answer);
+
+      const nextIndex = currentQuestionIndex + 1;
+      if (nextIndex < request.questions.length) {
+        // Move to next question
+        const nextQuestion = request.questions[nextIndex];
+        questionHeaderText.content = nextQuestion.header;
+        questionLabel.content = `:> ${nextQuestion.question}`;
+
+        const allowCustom = nextQuestion.custom !== false;
+        type QuestionSelectValue = { type: "option" | "custom"; index: number; label: string };
+        const selectOptions: Array<{ name: string; description: string; value: QuestionSelectValue }> = nextQuestion.options.map((opt, idx) => ({
+          name: opt.label,
+          description: opt.description,
+          value: { type: "option", index: idx, label: opt.label },
+        }));
+        if (allowCustom) {
+          selectOptions.push({
+            name: "Other",
+            description: "Type your own answer",
+            value: { type: "custom", index: -1, label: "" },
+          });
+        }
+
+        questionSelect.options = selectOptions;
+        questionSelect.setSelectedIndex(0);
+        questionSelect.visible = true;
+        questionCustomInput.visible = false;
+        questionCustomInput.value = "";
+        questionHelpText.content = nextQuestion.multiple
+          ? "Use ↑/↓ to select, Space to toggle, Enter to confirm"
+          : "Use ↑/↓ to select, Enter to confirm";
+
+        viewState = {
+          ...viewState,
+          currentQuestionIndex: nextIndex,
+          answers,
+          customInputActive: false,
+          selectedIndex: 0,
+        };
+        questionSelect.focus();
+      } else {
+        // All questions answered, resolve and return to output view
+        resolve(answers);
+        viewState = { type: "bootstrap-output" };
+        showView("bootstrap-output");
+      }
     };
 
     // OAuth abort controller for cancellation
@@ -1091,8 +1252,64 @@ export async function runBootstrapPrompt(
         return;
       }
 
+      // Handle question navigation and selection with direct keyboard events
+      if (viewState.type === "question" && !viewState.customInputActive) {
+        if (evt.name === "up" || evt.name === "k") {
+          const total = questionSelect.options.length;
+          const newIndex = (viewState.selectedIndex - 1 + total) % total;
+          viewState = { ...viewState, selectedIndex: newIndex };
+          questionSelect.setSelectedIndex(newIndex);
+          return;
+        }
+        if (evt.name === "down" || evt.name === "j") {
+          const total = questionSelect.options.length;
+          const newIndex = (viewState.selectedIndex + 1) % total;
+          viewState = { ...viewState, selectedIndex: newIndex };
+          questionSelect.setSelectedIndex(newIndex);
+          return;
+        }
+        if (evt.name === "return") {
+          const selected = questionSelect.getSelectedOption();
+          if (!selected) return;
+
+          const value = selected.value as { type: "option" | "custom"; index: number; label: string };
+          if (value.type === "custom") {
+            viewState = { ...viewState, customInputActive: true };
+            questionSelect.visible = false;
+            questionCustomInput.visible = true;
+            questionCustomInput.value = "";
+            questionHelpText.content = "Type your answer and press Enter, or Esc to go back";
+            questionCustomInput.focus();
+          } else {
+            processQuestionAnswer([value.label]);
+          }
+          return;
+        }
+      }
+
       // Handle escape for going back
       if (evt.name === "escape") {
+        // Handle question view escape
+        if (viewState.type === "question") {
+          if (viewState.customInputActive) {
+            // Go back from custom input to select
+            viewState = { ...viewState, customInputActive: false };
+            questionCustomInput.visible = false;
+            questionSelect.visible = true;
+            const question = viewState.request.questions[viewState.currentQuestionIndex];
+            questionHelpText.content = question.multiple
+              ? "Use ↑/↓ to select, Space to toggle, Enter to confirm"
+              : "Use ↑/↓ to select, Enter to confirm";
+            questionSelect.focus();
+          } else {
+            // Reject the question and return to output view
+            viewState.reject(new Error("Question rejected by user"));
+            viewState = { type: "bootstrap-output" };
+            showView("bootstrap-output");
+          }
+          return;
+        }
+
         const canGoBack = viewState.type === "auth-method-select" ||
           viewState.type === "oauth-auto" ||
           viewState.type === "oauth-code" ||
@@ -1192,6 +1409,39 @@ export async function runBootstrapPrompt(
       selectedModel = selected.value as ModelOption;
 
       goToIntentPrompt();
+    });
+
+    // Handle question selection
+    questionSelect.on(SelectRenderableEvents.ITEM_SELECTED, async () => {
+      debugger; // Check if this event fires
+      if (viewState.type !== "question") return;
+
+      const selected = questionSelect.getSelectedOption();
+      if (!selected) return;
+
+      const value = selected.value as { type: "option" | "custom"; index: number; label: string };
+
+      if (value.type === "custom") {
+        // Switch to custom input mode
+        viewState = { ...viewState, customInputActive: true };
+        questionSelect.visible = false;
+        questionCustomInput.visible = true;
+        questionCustomInput.value = "";
+        questionHelpText.content = "Type your answer and press Enter, or Esc to go back";
+        questionCustomInput.focus();
+      } else {
+        processQuestionAnswer([value.label]);
+      }
+    });
+
+    // Handle question custom input Enter
+    questionCustomInput.on(InputRenderableEvents.ENTER, () => {
+      if (viewState.type !== "question" || !viewState.customInputActive) return;
+
+      const customAnswer = questionCustomInput.value?.trim();
+      if (!customAnswer) return;
+
+      processQuestionAnswer([customAnswer]);
     });
 
     // Handle intent input Enter

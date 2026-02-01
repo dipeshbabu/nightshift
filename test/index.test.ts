@@ -312,6 +312,7 @@ function createMockUI(): BootstrapUI & {
   showWriteOutput: ReturnType<typeof mock>;
   showEditOutput: ReturnType<typeof mock>;
   appendToolStatus: ReturnType<typeof mock>;
+  showQuestion: ReturnType<typeof mock>;
 } {
   return {
     setStatus: mock(() => {}),
@@ -321,7 +322,8 @@ function createMockUI(): BootstrapUI & {
     showWriteOutput: mock(() => {}),
     showEditOutput: mock(() => {}),
     showDiff: mock(() => {}),
-    cleanup: mock(() => {}),
+    setSpinnerActive: mock(() => {}),
+    showQuestion: mock(() => Promise.resolve([["Option 1"]])),
   };
 }
 
@@ -418,4 +420,89 @@ test("handleToolCompletion uses tool name as fallback title", () => {
   };
   handleToolCompletion(ui, part);
   expect(ui.appendToolStatus).toHaveBeenCalledWith("completed", "some_tool");
+});
+
+// Tests for BootstrapUI interface
+import type { QuestionRequest, QuestionAnswer } from "../src/bootstrap-prompt";
+
+test("BootstrapUI showQuestion interface accepts QuestionRequest", () => {
+  const ui = createMockUI();
+  const request: QuestionRequest = {
+    id: "q1",
+    sessionID: "session1",
+    questions: [
+      {
+        question: "What is your preferred library?",
+        header: "Library",
+        options: [
+          { label: "pandas", description: "Data analysis library" },
+          { label: "polars", description: "Fast DataFrame library" },
+        ],
+        multiple: false,
+      },
+    ],
+  };
+
+  // Should be callable and return a promise
+  const result = ui.showQuestion(request);
+  expect(result).toBeInstanceOf(Promise);
+});
+
+test("QuestionRequest can have multiple questions", () => {
+  const request: QuestionRequest = {
+    id: "q2",
+    sessionID: "session2",
+    questions: [
+      {
+        question: "What data sources?",
+        header: "Sources",
+        options: [
+          { label: "CSV", description: "CSV files" },
+          { label: "Database", description: "SQL database" },
+        ],
+      },
+      {
+        question: "Output format?",
+        header: "Format",
+        options: [
+          { label: "JSON", description: "JSON output" },
+          { label: "Excel", description: "Excel spreadsheet" },
+        ],
+      },
+    ],
+  };
+
+  expect(request.questions).toHaveLength(2);
+  expect(request.questions[0].header).toBe("Sources");
+  expect(request.questions[1].header).toBe("Format");
+});
+
+test("QuestionRequest supports multiple selection", () => {
+  const request: QuestionRequest = {
+    id: "q3",
+    sessionID: "session3",
+    questions: [
+      {
+        question: "Select all features you need",
+        header: "Features",
+        options: [
+          { label: "Charts", description: "Data visualization" },
+          { label: "Export", description: "Export functionality" },
+          { label: "Import", description: "Import functionality" },
+        ],
+        multiple: true,
+      },
+    ],
+  };
+
+  expect(request.questions[0].multiple).toBe(true);
+});
+
+test("QuestionAnswer is an array of selected labels", () => {
+  // QuestionAnswer is Array<string> - one answer per question
+  const singleAnswer: QuestionAnswer = ["pandas"];
+  const multiAnswer: QuestionAnswer = ["Charts", "Export"];
+
+  expect(singleAnswer).toHaveLength(1);
+  expect(multiAnswer).toHaveLength(2);
 });
