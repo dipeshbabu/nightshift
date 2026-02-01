@@ -54,6 +54,15 @@ export interface BootstrapUI {
   setSpinnerActive: (active: boolean) => void;
 }
 
+export interface BootstrapPromptOptions {
+  /** Custom renderer for testing. If not provided, creates a CLI renderer. */
+  renderer?: ReturnType<typeof createCliRenderer> extends Promise<infer R> ? R : never;
+  /** Skip TTY check for testing. Default: false */
+  skipTtyCheck?: boolean;
+  /** Auto-start the renderer. Default: true (set to false for testing) */
+  autoStart?: boolean;
+}
+
 /**
  * Convert FileDiff to unified diff format
  */
@@ -106,18 +115,22 @@ function getFiletype(filename: string): string | undefined {
  * When the user submits, transitions to an output view and runs the bootstrap callback.
  *
  * @param onBootstrap - Called with the user's intent and a UI interface for streaming output
+ * @param options - Optional configuration for testing
  * @returns The user's intent string, or null if they skipped (Ctrl+C)
  */
 export async function runBootstrapPrompt(
-  onBootstrap: (intent: string, ui: BootstrapUI) => Promise<void>
+  onBootstrap: (intent: string, ui: BootstrapUI) => Promise<void>,
+  options: BootstrapPromptOptions = {}
 ): Promise<string | null> {
+  const { renderer: customRenderer, skipTtyCheck = false, autoStart = true } = options;
+
   // Check if we're in a TTY
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  if (!skipTtyCheck && (!process.stdin.isTTY || !process.stdout.isTTY)) {
     console.log("Not running in a TTY, skipping bootstrap prompt.");
     return null;
   }
 
-  const renderer = await createCliRenderer({
+  const renderer = customRenderer ?? await createCliRenderer({
     exitOnCtrlC: true,
   });
 
@@ -135,14 +148,20 @@ export async function runBootstrapPrompt(
     const cleanup = (value: string | null) => {
       if (resolved) return;
       resolved = true;
-      renderer.destroy();
+      // Don't destroy custom renderers (for testing)
+      if (!customRenderer) {
+        renderer.destroy();
+      }
       resolve(value);
     };
 
     const cleanupWithError = (err: unknown) => {
       if (resolved) return;
       resolved = true;
-      renderer.destroy();
+      // Don't destroy custom renderers (for testing)
+      if (!customRenderer) {
+        renderer.destroy();
+      }
       reject(err);
     };
 
@@ -377,13 +396,9 @@ export async function runBootstrapPrompt(
         const blockId = `bash-${outputCounter++}`;
         const cleanOutput = stripAnsi(output.trim());
 
-        // Limit output to 10 lines
+        // Check if output needs truncation
         const lines = cleanOutput.split("\n");
-        const displayLines = lines.slice(0, 10);
         const truncated = lines.length > 10;
-        const displayOutput = truncated
-          ? displayLines.join("\n") + `\n... (${lines.length - 10} more lines)`
-          : cleanOutput;
 
         // Create container box with left border (BlockTool pattern)
         const blockBox = new BoxRenderable(renderer, {
@@ -414,18 +429,47 @@ export async function runBootstrapPrompt(
           fg: COLORS.text,
         });
 
-        // Output text
-        const outputTextNode = new TextRenderable(renderer, {
-          id: `${blockId}-output`,
-          content: displayOutput,
-          fg: COLORS.text,
-          wrapMode: "word",
-        });
-
         blockBox.add(titleText);
         blockBox.add(commandText);
-        if (displayOutput) {
+
+        if (cleanOutput) {
+          // Track expanded state for this output
+          let expanded = false;
+
+          // Output text node
+          const outputTextNode = new TextRenderable(renderer, {
+            id: `${blockId}-output`,
+            content: truncated ? lines.slice(0, 10).join("\n") : cleanOutput,
+            fg: COLORS.text,
+            wrapMode: "word",
+          });
           blockBox.add(outputTextNode);
+
+          if (truncated) {
+            // Create clickable "more lines" indicator
+            const moreText = new TextRenderable(renderer, {
+              id: `${blockId}-more`,
+              content: `... (${lines.length - 10} more lines) - click to expand`,
+              fg: COLORS.textMuted,
+              onMouseUp: () => {
+                expanded = !expanded;
+                if (expanded) {
+                  outputTextNode.content = cleanOutput;
+                  moreText.content = "click to collapse";
+                } else {
+                  outputTextNode.content = lines.slice(0, 10).join("\n");
+                  moreText.content = `... (${lines.length - 10} more lines) - click to expand`;
+                }
+              },
+              onMouseOver: function() {
+                this.fg = COLORS.primary;
+              },
+              onMouseOut: function() {
+                this.fg = COLORS.textMuted;
+              },
+            });
+            blockBox.add(moreText);
+          }
         }
 
         scrollBox.add(blockBox);
@@ -463,19 +507,45 @@ export async function runBootstrapPrompt(
         // Show content preview (limited to 10 lines)
         if (content && content.trim()) {
           const lines = content.split("\n");
-          const displayLines = lines.slice(0, 10);
           const truncated = lines.length > 10;
-          const displayContent = truncated
-            ? displayLines.join("\n") + `\n... (${lines.length - 10} more lines)`
-            : content;
 
+          // Track expanded state for this output
+          let expanded = false;
+
+          // Content text node
           const contentText = new TextRenderable(renderer, {
             id: `${blockId}-content`,
-            content: displayContent,
+            content: truncated ? lines.slice(0, 10).join("\n") : content,
             fg: COLORS.text,
             wrapMode: "word",
           });
           blockBox.add(contentText);
+
+          if (truncated) {
+            // Create clickable "more lines" indicator
+            const moreText = new TextRenderable(renderer, {
+              id: `${blockId}-more`,
+              content: `... (${lines.length - 10} more lines) - click to expand`,
+              fg: COLORS.textMuted,
+              onMouseUp: () => {
+                expanded = !expanded;
+                if (expanded) {
+                  contentText.content = content;
+                  moreText.content = "click to collapse";
+                } else {
+                  contentText.content = lines.slice(0, 10).join("\n");
+                  moreText.content = `... (${lines.length - 10} more lines) - click to expand`;
+                }
+              },
+              onMouseOver: function() {
+                this.fg = COLORS.primary;
+              },
+              onMouseOut: function() {
+                this.fg = COLORS.textMuted;
+              },
+            });
+            blockBox.add(moreText);
+          }
         }
 
         scrollBox.add(blockBox);
@@ -566,7 +636,9 @@ export async function runBootstrapPrompt(
       }
     });
 
-    // Start rendering
-    renderer.start();
+    // Start rendering (skip for testing when renderer is managed externally)
+    if (autoStart) {
+      renderer.start();
+    }
   });
 }

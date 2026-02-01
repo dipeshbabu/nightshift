@@ -280,22 +280,7 @@ describe("bootstrap integration", () => {
   });
 });
 
-describe("bootstrap prompt UI", () => {
-  // The TUI prompt is harder to test without a full terminal mock
-  // These are placeholder tests for the expected behavior
-
-  test.skip("renders prompt text", async () => {
-    // Would need opentui test utilities
-  });
-
-  test.skip("returns user input on Enter", async () => {
-    // Would need opentui test utilities
-  });
-
-  test.skip("returns null on Ctrl+C", async () => {
-    // Would need opentui test utilities
-  });
-});
+// Bootstrap prompt UI tests are in bootstrap-prompt.test.ts
 
 describe("event handling logic", () => {
   test("filters events by session ID", () => {
