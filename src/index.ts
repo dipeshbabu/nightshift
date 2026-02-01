@@ -710,7 +710,7 @@ async function bootstrapWithOpencode(
               const request = event.properties;
               if (request.sessionID === sessionId) {
                 const description = request.metadata?.description || request.metadata?.filepath || request.patterns?.[0] || "";
-                ui.appendLine(`[Auto-approving ${request.permission}${description ? `: ${description}` : ""}]`);
+                ui.appendText(`[Auto-approving ${request.permission}${description ? `: ${description}` : ""}]\n`);
                 await client.permission.reply({
                   requestID: request.id,
                   reply: "once",
@@ -725,7 +725,7 @@ async function bootstrapWithOpencode(
 
               // Stream text deltas
               if (part.type === "text" && delta) {
-                ui.appendOutput(delta);
+                ui.appendText(delta);
               }
 
               // Show tool execution status
@@ -735,18 +735,44 @@ async function bootstrapWithOpencode(
 
                 if (prevState !== currentState) {
                   toolStates.set(part.id, currentState);
+                  const title = (part.state as any).title || part.tool;
 
                   if (currentState === "running") {
-                    const title = (part.state as any).title || part.tool;
                     ui.setStatus(`Running: ${title}`);
+                    ui.appendToolStatus("running", title);
                   } else if (currentState === "completed") {
-                    const title = (part.state as any).title || part.tool;
-                    ui.appendLine(`[Completed: ${title}]`);
+                    const output = (part.state as any).output;
+                    const input = (part.state as any).input;
+                    const metadata = (part.state as any).metadata;
+
+                    // Show bash command output with BlockTool-style container
+                    if (part.tool === "bash" && output?.trim()) {
+                      const command = input?.command || title;
+                      const description = input?.description;
+                      ui.showBashOutput(command, output, description);
+                    } else if (part.tool === "write" && input?.filePath) {
+                      // Show write tool output with file content
+                      ui.showWriteOutput(input.filePath, input.content || "");
+                    } else if (part.tool === "edit" && metadata?.diff) {
+                      // Show edit tool output with diff
+                      ui.showEditOutput(input.filePath, metadata.diff);
+                    } else {
+                      // Other tools: show simple status
+                      ui.appendToolStatus("completed", title);
+                    }
                   } else if (currentState === "error") {
                     const error = (part.state as any).error || "Unknown error";
-                    ui.appendLine(`[Error: ${part.tool} - ${error}]`);
+                    ui.appendToolStatus("error", `${title}: ${error}`);
                   }
                 }
+              }
+            }
+
+            // Handle session diffs (file changes)
+            if (event.type === "session.diff") {
+              const { sessionID, diff } = event.properties;
+              if (sessionID === sessionId && diff && diff.length > 0) {
+                ui.showDiff(diff);
               }
             }
 

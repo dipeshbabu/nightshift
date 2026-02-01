@@ -5,12 +5,100 @@ import {
   InputRenderable,
   InputRenderableEvents,
   ScrollBoxRenderable,
+  DiffRenderable,
+  SyntaxStyle,
+  RGBA,
 } from "@opentui/core";
+import { SpinnerRenderable } from "opentui-spinner";
+import { createFrames, createColors } from "./cli/cmd/tui/tui/ui/spinner";
+import stripAnsi from "strip-ansi";
+
+// Colors for the bootstrap UI
+const COLORS = {
+  primary: "#fab283",
+  text: "#eeeeee",
+  textMuted: "#808080",
+  background: "#303030",
+  backgroundPanel: "#262626",
+  toolRunning: "#61afef",
+  toolCompleted: "#98c379",
+  toolError: "#e06c75",
+};
+
+// Syntax style for code highlighting in diffs
+const syntaxStyle = SyntaxStyle.fromStyles({
+  keyword: { fg: RGBA.fromHex("#FF7B72"), bold: true },
+  string: { fg: RGBA.fromHex("#A5D6FF") },
+  comment: { fg: RGBA.fromHex("#8B949E"), italic: true },
+  number: { fg: RGBA.fromHex("#79C0FF") },
+  function: { fg: RGBA.fromHex("#D2A8FF") },
+  default: { fg: RGBA.fromHex("#E6EDF3") },
+});
+
+export interface FileDiff {
+  file: string;
+  before: string;
+  after: string;
+  additions: number;
+  deletions: number;
+}
 
 export interface BootstrapUI {
-  appendOutput: (text: string) => void;
-  appendLine: (text: string) => void;
+  appendText: (text: string) => void;
+  appendToolStatus: (status: "running" | "completed" | "error", text: string) => void;
   setStatus: (status: string) => void;
+  showDiff: (diffs: FileDiff[]) => void;
+  showBashOutput: (command: string, output: string, description?: string) => void;
+  showWriteOutput: (filePath: string, content: string) => void;
+  showEditOutput: (filePath: string, diff: string) => void;
+  setSpinnerActive: (active: boolean) => void;
+}
+
+/**
+ * Convert FileDiff to unified diff format
+ */
+function toUnifiedDiff(diff: FileDiff): string {
+  const beforeLines = diff.before.split("\n");
+  const afterLines = diff.after.split("\n");
+
+  let result = `--- a/${diff.file}\n+++ b/${diff.file}\n`;
+
+  // Simple unified diff - show all as changed
+  if (beforeLines.length > 0 || afterLines.length > 0) {
+    result += `@@ -1,${beforeLines.length} +1,${afterLines.length} @@\n`;
+    for (const line of beforeLines) {
+      if (line || beforeLines.length === 1) {
+        result += `-${line}\n`;
+      }
+    }
+    for (const line of afterLines) {
+      if (line || afterLines.length === 1) {
+        result += `+${line}\n`;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Get file extension for syntax highlighting
+ */
+function getFiletype(filename: string): string | undefined {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  const mapping: Record<string, string> = {
+    py: "python",
+    js: "javascript",
+    ts: "typescript",
+    tsx: "tsx",
+    jsx: "jsx",
+    md: "markdown",
+    json: "json",
+    toml: "toml",
+    yaml: "yaml",
+    yml: "yaml",
+  };
+  return ext ? mapping[ext] : undefined;
 }
 
 /**
@@ -30,17 +118,19 @@ export async function runBootstrapPrompt(
   }
 
   const renderer = await createCliRenderer({
-    exitOnCtrlC: false,
+    exitOnCtrlC: true,
   });
 
   return new Promise<string | null>((resolve, reject) => {
     let resolved = false;
-    let outputBuffer = "";
-    let outputText: TextRenderable;
+    let outputCounter = 0;
     let statusText: TextRenderable;
     let scrollBox: ScrollBoxRenderable;
     let inputContainer: BoxRenderable;
     let outputContainer: BoxRenderable;
+    let spinner: SpinnerRenderable;
+    let statusContainer: BoxRenderable;
+    let contentBox: BoxRenderable;
 
     const cleanup = (value: string | null) => {
       if (resolved) return;
@@ -54,6 +144,22 @@ export async function runBootstrapPrompt(
       resolved = true;
       renderer.destroy();
       reject(err);
+    };
+
+    // Create spinner frames and colors for knight rider effect
+    const spinnerDef = {
+      frames: createFrames({
+        color: COLORS.primary,
+        style: "blocks",
+        inactiveFactor: 0.6,
+        minAlpha: 0.3,
+      }),
+      colors: createColors({
+        color: COLORS.primary,
+        style: "blocks",
+        inactiveFactor: 0.6,
+        minAlpha: 0.3,
+      }),
     };
 
     // Create main container
@@ -76,7 +182,7 @@ export async function runBootstrapPrompt(
     const label = new TextRenderable(renderer, {
       id: "label",
       content: ":> What are you going to use nightshift for?",
-      fg: "#fab283",
+      fg: COLORS.primary,
     });
 
     // Create input field
@@ -85,17 +191,17 @@ export async function runBootstrapPrompt(
       height: 1,
       width: 60,
       placeholder: "e.g., managing my personal finances, analyzing data...",
-      textColor: "#eeeeee",
+      textColor: COLORS.text,
       focusedTextColor: "#ffffff",
-      cursorColor: "#fab283",
-      placeholderColor: "#808080",
+      cursorColor: COLORS.primary,
+      placeholderColor: COLORS.textMuted,
     });
 
     // Create help text
     const helpText = new TextRenderable(renderer, {
       id: "help",
       content: "Press Enter to submit, Ctrl+C to skip",
-      fg: "#808080",
+      fg: COLORS.textMuted,
     });
 
     // Add elements to input container
@@ -112,11 +218,36 @@ export async function runBootstrapPrompt(
       visible: false,
     });
 
-    // Status line
+    // Status container with spinner
+    statusContainer = new BoxRenderable(renderer, {
+      id: "status-container",
+      flexDirection: "row",
+      gap: 1,
+      height: 1,
+    });
+
+    // Knight rider spinner
+    spinner = new SpinnerRenderable(renderer, {
+      frames: spinnerDef.frames,
+      color: spinnerDef.colors,
+      interval: 40,
+    });
+
+    // Status text
     statusText = new TextRenderable(renderer, {
       id: "status",
       content: "Bootstrapping...",
-      fg: "#fab283",
+      fg: COLORS.primary,
+    });
+
+    statusContainer.add(spinner);
+    statusContainer.add(statusText);
+
+    // Content box for scrollable output and diffs
+    contentBox = new BoxRenderable(renderer, {
+      id: "content-box",
+      flexDirection: "column",
+      flexGrow: 1,
     });
 
     // Scrollable output area with sticky scroll to follow new content
@@ -128,16 +259,10 @@ export async function runBootstrapPrompt(
       stickyStart: "bottom",
     });
 
-    outputText = new TextRenderable(renderer, {
-      id: "output",
-      content: "",
-      fg: "#eeeeee",
-      wrapMode: "word",
-    });
+    contentBox.add(scrollBox);
 
-    scrollBox.add(outputText);
-    outputContainer.add(statusText);
-    outputContainer.add(scrollBox);
+    outputContainer.add(statusContainer);
+    outputContainer.add(contentBox);
 
     // Add sections to main container
     container.add(inputContainer);
@@ -147,20 +272,268 @@ export async function runBootstrapPrompt(
     renderer.root.add(container);
 
     // Focus the input
-    //input.focus();
+    input.focus();
+
+    // Track current text node for appending deltas to the same line
+    let currentTextNode: TextRenderable | null = null;
+    let currentTextContent = "";
 
     // Create UI interface for bootstrap process
     const ui: BootstrapUI = {
-      appendOutput: (text: string) => {
-        outputBuffer += text;
-        outputText.content = outputBuffer;
+      appendText: (text: string) => {
+        if (!text) return;
+
+        // Append to existing text node if we have one
+        if (currentTextNode) {
+          currentTextContent += text;
+          currentTextNode.content = currentTextContent;
+        } else {
+          // Create a new text node for the first delta
+          currentTextContent = text;
+          currentTextNode = new TextRenderable(renderer, {
+            id: `output-${outputCounter++}`,
+            content: currentTextContent,
+            fg: COLORS.text,
+            wrapMode: "word",
+          });
+          scrollBox.add(currentTextNode);
+        }
       },
-      appendLine: (text: string) => {
-        outputBuffer += text + "\n";
-        outputText.content = outputBuffer;
+      appendToolStatus: (status: "running" | "completed" | "error", text: string) => {
+        // Reset text node so next text starts fresh after this tool output
+        currentTextNode = null;
+        currentTextContent = "";
+
+        let prefix: string;
+        let color: string;
+        switch (status) {
+          case "running":
+            prefix = "▶";
+            color = COLORS.toolRunning;
+            break;
+          case "completed":
+            prefix = "✓";
+            color = COLORS.toolCompleted;
+            break;
+          case "error":
+            prefix = "✗";
+            color = COLORS.toolError;
+            break;
+        }
+        const statusNode = new TextRenderable(renderer, {
+          id: `status-${outputCounter++}`,
+          content: `${prefix} ${text}`,
+          fg: color,
+        });
+        scrollBox.add(statusNode);
       },
       setStatus: (status: string) => {
         statusText.content = status;
+      },
+      showDiff: (diffs: FileDiff[]) => {
+        // Reset text node so next text starts fresh after this tool output
+        currentTextNode = null;
+        currentTextContent = "";
+
+        for (const diff of diffs) {
+          // Add file header inline
+          const headerNode = new TextRenderable(renderer, {
+            id: `diff-header-${outputCounter++}`,
+            content: `\n📄 ${diff.file} (+${diff.additions} -${diff.deletions})`,
+            fg: COLORS.text,
+          });
+          scrollBox.add(headerNode);
+
+          // Create unified diff string
+          const unifiedDiff = toUnifiedDiff(diff);
+          const filetype = getFiletype(diff.file);
+
+          // Create a DiffRenderable for this diff
+          const diffRenderable = new DiffRenderable(renderer, {
+            id: `diff-${outputCounter++}`,
+            diff: unifiedDiff,
+            view: "unified",
+            syntaxStyle,
+            filetype,
+            showLineNumbers: true,
+            addedBg: RGBA.fromHex("#1a3d1a"),
+            removedBg: RGBA.fromHex("#3d1a1a"),
+            addedSignColor: RGBA.fromHex("#98c379"),
+            removedSignColor: RGBA.fromHex("#e06c75"),
+            fg: RGBA.fromHex("#e6edf3"),
+            width: "100%",
+            height: Math.min(diff.additions + diff.deletions + 4, 20),
+          });
+
+          scrollBox.add(diffRenderable);
+        }
+      },
+      showBashOutput: (command: string, output: string, description?: string) => {
+        // Reset text node so next text starts fresh after this tool output
+        currentTextNode = null;
+        currentTextContent = "";
+
+        // Create a BlockTool-style container with left border
+        const blockId = `bash-${outputCounter++}`;
+        const cleanOutput = stripAnsi(output.trim());
+
+        // Limit output to 10 lines
+        const lines = cleanOutput.split("\n");
+        const displayLines = lines.slice(0, 10);
+        const truncated = lines.length > 10;
+        const displayOutput = truncated
+          ? displayLines.join("\n") + `\n... (${lines.length - 10} more lines)`
+          : cleanOutput;
+
+        // Create container box with left border (BlockTool pattern)
+        const blockBox = new BoxRenderable(renderer, {
+          id: blockId,
+          flexDirection: "column",
+          border: ["left"],
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 2,
+          marginTop: 1,
+          gap: 1,
+          backgroundColor: COLORS.backgroundPanel,
+          borderColor: COLORS.background,
+        });
+
+        // Title text (muted) - use description if provided
+        const title = description ? `# ${description}` : "# Shell";
+        const titleText = new TextRenderable(renderer, {
+          id: `${blockId}-title`,
+          content: title,
+          fg: COLORS.textMuted,
+        });
+
+        // Command with $ prefix
+        const commandText = new TextRenderable(renderer, {
+          id: `${blockId}-cmd`,
+          content: `$ ${command}`,
+          fg: COLORS.text,
+        });
+
+        // Output text
+        const outputTextNode = new TextRenderable(renderer, {
+          id: `${blockId}-output`,
+          content: displayOutput,
+          fg: COLORS.text,
+          wrapMode: "word",
+        });
+
+        blockBox.add(titleText);
+        blockBox.add(commandText);
+        if (displayOutput) {
+          blockBox.add(outputTextNode);
+        }
+
+        scrollBox.add(blockBox);
+      },
+      showWriteOutput: (filePath: string, content: string) => {
+        // Reset text node so next text starts fresh after this tool output
+        currentTextNode = null;
+        currentTextContent = "";
+
+        const blockId = `write-${outputCounter++}`;
+
+        // Create container box with left border (BlockTool pattern)
+        const blockBox = new BoxRenderable(renderer, {
+          id: blockId,
+          flexDirection: "column",
+          border: ["left"],
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 2,
+          marginTop: 1,
+          gap: 1,
+          backgroundColor: COLORS.backgroundPanel,
+          borderColor: COLORS.background,
+        });
+
+        // Title text (muted)
+        const titleText = new TextRenderable(renderer, {
+          id: `${blockId}-title`,
+          content: `# Wrote ${filePath}`,
+          fg: COLORS.textMuted,
+        });
+
+        blockBox.add(titleText);
+
+        // Show content preview (limited to 10 lines)
+        if (content && content.trim()) {
+          const lines = content.split("\n");
+          const displayLines = lines.slice(0, 10);
+          const truncated = lines.length > 10;
+          const displayContent = truncated
+            ? displayLines.join("\n") + `\n... (${lines.length - 10} more lines)`
+            : content;
+
+          const contentText = new TextRenderable(renderer, {
+            id: `${blockId}-content`,
+            content: displayContent,
+            fg: COLORS.text,
+            wrapMode: "word",
+          });
+          blockBox.add(contentText);
+        }
+
+        scrollBox.add(blockBox);
+      },
+      showEditOutput: (filePath: string, diff: string) => {
+        // Reset text node so next text starts fresh after this tool output
+        currentTextNode = null;
+        currentTextContent = "";
+
+        const blockId = `edit-${outputCounter++}`;
+        const filetype = getFiletype(filePath);
+
+        // Create container box with left border (BlockTool pattern)
+        const blockBox = new BoxRenderable(renderer, {
+          id: blockId,
+          flexDirection: "column",
+          border: ["left"],
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 2,
+          marginTop: 1,
+          gap: 1,
+          backgroundColor: COLORS.backgroundPanel,
+          borderColor: COLORS.background,
+        });
+
+        // Title text (muted)
+        const titleText = new TextRenderable(renderer, {
+          id: `${blockId}-title`,
+          content: `← Edit ${filePath}`,
+          fg: COLORS.textMuted,
+        });
+
+        blockBox.add(titleText);
+
+        // Create a DiffRenderable for this edit
+        if (diff && diff.trim()) {
+          const diffRenderable = new DiffRenderable(renderer, {
+            id: `${blockId}-diff`,
+            diff: diff,
+            view: "unified",
+            syntaxStyle,
+            filetype,
+            showLineNumbers: true,
+            addedBg: RGBA.fromHex("#1a3d1a"),
+            removedBg: RGBA.fromHex("#3d1a1a"),
+            addedSignColor: RGBA.fromHex("#98c379"),
+            removedSignColor: RGBA.fromHex("#e06c75"),
+            fg: RGBA.fromHex("#e6edf3"),
+            width: "100%",
+          });
+          blockBox.add(diffRenderable);
+        }
+
+        scrollBox.add(blockBox);
+      },
+      setSpinnerActive: (active: boolean) => {
+        spinner.visible = active;
       },
     };
 
@@ -176,9 +549,10 @@ export async function runBootstrapPrompt(
 
       try {
         await onBootstrap(intent, ui);
-        ui.setStatus("Bootstrap complete!");
+        spinner.visible = false;
+        ui.setStatus("✓ Bootstrap complete!");
         // Small delay so user can see completion message
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 1000));
         cleanup(intent);
       } catch (err) {
         cleanupWithError(err);
