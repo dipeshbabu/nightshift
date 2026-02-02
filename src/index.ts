@@ -4,8 +4,7 @@ import { homedir } from "os";
 import { mkdirSync, symlinkSync, existsSync, chmodSync } from "fs";
 import { buildSandboxCommand, type SandboxOptions } from "./sandbox";
 const { runBootstrapPrompt } = await import("./bootstrap-prompt");
-const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
-
+import { bootEval } from "./cli/cmd/eval/boot-agent";
 
 const OPENCODE_VERSION = "v1.1.37"
 const PYTHON_VERSION = "3.13.11";
@@ -1258,6 +1257,40 @@ if (import.meta.main) {
         try {
           const { tui } = await import("./cli/cmd/tui/tui/app");
           await tui(buildAttachTuiArgs(argv.url!, argv.session, process.cwd()));
+        } catch (err) {
+          console.error("Attach failed:", err);
+          process.exit(1);
+        }
+      },
+    )
+    .command(
+      "eval",
+      "Evaluate the agent",
+      (y) =>
+        y
+          .option("evalBoot", {
+            type: "boolean",
+            default: false,
+            describe: "Evaluate the bootstrap process",
+          })
+          .option("filePath", {
+            type: "string",
+            describe: "Path to the eval file",
+          }),
+      async (argv) => {
+        try {
+          if (argv.evalBoot) {
+            if (!argv.filePath) {
+              throw new Error("filePath is required when evalBoot is true");
+            }
+            const result = await bootEval(argv.filePath);
+            console.log("Bootstrap Evaluation Result:");
+            console.log(result.files)
+            console.log(result.fullContent)
+            process.exit(0)
+
+          }
+
         } catch (err) {
           console.error("Attach failed:", err);
           process.exit(1);
