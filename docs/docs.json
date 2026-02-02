@@ -1,0 +1,56 @@
+{
+  "theme": "mint",
+  "name": "Nightshift",
+  "colors": {
+    "primary": "#c4f042",
+    "light": "#d4ff4f",
+    "dark": "#9ac032"
+  },
+  "logo": {
+    "light": "/logo/nightshift-text.png",
+    "dark": "/logo/nightshift-text.png",
+    "href": "https://nightshift.sh"
+  },
+  "favicon": "/logo/kokapo.svg",
+  "description": "Bun-native CLI for isolated, reproducible OpenCode environments",
+  "appearance": {
+    "default": "dark"
+  },
+  "fonts": {
+    "body": {
+      "family": "Work Sans"
+    }
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "introduction",
+          "installation",
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Usage",
+        "pages": [
+          "cli",
+          "tui",
+          "configuration"
+        ]
+      },
+      {
+        "group": "Development",
+        "pages": [
+          "development",
+          "contributing"
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/nightshiftco/nightshift"
+    }
+  }
+}

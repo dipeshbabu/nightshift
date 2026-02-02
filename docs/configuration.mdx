@@ -1,0 +1,32 @@
+---
+title: Configuration
+description: Configure Nightshift and OpenCode settings
+---
+
+Nightshift delegates configuration to OpenCode. If you already use OpenCode config files, they are picked up automatically.
+
+## Config file locations
+
+| Location | Scope |
+|----------|-------|
+| `opencode.json` | Project-level (in your project root) |
+| `~/.config/opencode/opencode.json` | Global settings |
+
+## Supported settings
+
+OpenCode configuration supports:
+
+- Model defaults
+- Keybind overrides
+- Custom commands
+- MCP servers
+- And more
+
+Refer to the [OpenCode documentation](https://opencode.ai/docs) for the full configuration reference.
+
+## Updating tool versions
+
+Pinned tool versions are defined in `src/index.ts`. To update:
+
+1. Edit the version constants in `src/index.ts`
+2. Re-run `nightshift install --prefix <prefix>` to download the new versions
