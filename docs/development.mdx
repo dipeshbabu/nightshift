@@ -1,0 +1,70 @@
+---
+title: Development
+description: Set up a local development environment
+---
+
+## Running from source
+
+Install dependencies:
+
+```bash
+bun install
+```
+
+Run the CLI directly:
+
+```bash
+bun run start -- install --prefix ~/.nightshift
+bun run start -- run --prefix ~/.nightshift --run-nightshift-tui
+```
+
+Attach to an existing server:
+
+```bash
+bun run start -- attach http://127.0.0.1:4096
+```
+
+## Debugging
+
+Debug the CLI with Bun's inspector (break on start):
+
+```bash
+bun run --inspect-brk start run --prefix ~/.nightshift --run-nightshift-tui
+```
+
+Or use the debug script:
+
+```bash
+bun run dev:debug -- run --prefix ~/.nightshift --run-nightshift-tui
+```
+
+## Building
+
+Build for your current platform:
+
+```bash
+bun run build:single
+```
+
+Build all targets (cross-platform):
+
+```bash
+bun run build
+```
+
+Build output is written to `dist/nightshift-<os>-<arch>/bin/nightshift`.
+
+## Project layout
+
+| Path | Description |
+|------|-------------|
+| `src/index.ts` | CLI entrypoint, installs tools, runs OpenCode, and launches the TUI |
+| `src/cli/cmd/tui/tui/` | Nightshift TUI (OpenTUI + Solid) |
+| `script/build.ts` | Bun build script for cross-platform binaries |
+| `bunfig.toml` | Bun bundler and JSX settings |
+
+## Troubleshooting
+
+- If the TUI cannot connect, verify `opencode serve` is reachable at the URL you provided
+- The SDK layer logs to `/tmp/nightshift-sdk.log` to help debug connection issues
+- Re-run `install` after changing tool versions in `src/index.ts`

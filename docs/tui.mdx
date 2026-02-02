@@ -1,0 +1,42 @@
+---
+title: TUI Guide
+description: Using the Nightshift terminal user interface
+---
+
+The Nightshift TUI is a focused shell around OpenCode sessions, built on OpenTUI + Solid.
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+P` | Open the command palette |
+| `Ctrl+X` | Leader key for many shortcuts |
+
+Use `/help` for a complete, up-to-date list of actions and keybinds.
+
+## Slash commands
+
+| Command | Description |
+|---------|-------------|
+| `/models` | List and switch between available models |
+| `/sessions` | Manage OpenCode sessions |
+| `/status` | View current session status |
+| `/help` | Show all available commands |
+
+## Starting the TUI
+
+### With a new server
+
+Start OpenCode in server mode and attach the TUI:
+
+```bash
+nightshift run --prefix ~/.nightshift --run-nightshift-tui
+```
+
+### With an existing server
+
+Attach to an already-running OpenCode server:
+
+```bash
+nightshift attach http://127.0.0.1:4096 --session <session-id>
+```

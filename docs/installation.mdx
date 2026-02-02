@@ -1,0 +1,45 @@
+---
+title: Installation
+description: Install Nightshift and its dependencies
+---
+
+## Prerequisites
+
+Before installing Nightshift, ensure you have:
+
+- macOS or Linux (x64 or arm64)
+- [Bun](https://bun.sh) installed and on PATH
+- System tools: `curl`, `tar`, and `unzip`
+- Network access to GitHub releases
+
+## Install from source
+
+Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/nightshiftco/nightshift.git
+cd nightshift
+bun install
+```
+
+Build a single binary for your current platform:
+
+```bash
+bun run build:single
+```
+
+The binary will be output to `dist/nightshift-<os>-<arch>/bin/nightshift`.
+
+## Toolchain layout
+
+Nightshift installs into a prefix directory you control:
+
+```
+<prefix>/
+  bin/          # symlinks: opencode, python, uv, rg
+  tools/        # extracted tool archives
+  venvs/
+    data-science/  # numpy + pandas
+```
+
+Pinned tool versions live in `src/index.ts` so you can update them centrally.
