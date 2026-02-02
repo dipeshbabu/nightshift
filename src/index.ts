@@ -3,6 +3,9 @@ import { resolve, join, relative } from "path";
 import { homedir } from "os";
 import { mkdirSync, symlinkSync, existsSync, chmodSync } from "fs";
 import { buildSandboxCommand, type SandboxOptions } from "./sandbox";
+const { runBootstrapPrompt } = await import("./bootstrap-prompt");
+const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
+
 
 const OPENCODE_VERSION = "v1.1.37"
 const PYTHON_VERSION = "3.13.11";
@@ -433,7 +436,7 @@ function generateOpencodeConfig(): string {
       "todoread": "allow",
       "question": "allow"
     },
-    "plugin": ["@processmesh-plugins/email"]
+    "plugin": ["@processmesh-plugins/email", "opencode-scheduler"]
   }, null, 2);
 }
 
@@ -623,12 +626,37 @@ function buildBootstrapPrompt(userIntent: string): string {
 You are bootstrapping a new workspace for the user. Their stated purpose is:
 "${userIntent}"
 
-Your task:
+## Important: Interview the User
+
+If asked to read from a BOOT.md file, you must read it first. There will be information useful for you to help the user.
+
+If there is a mention of Skills in either Markdown or JSON in the BOOT.md, you MUST use those to create skill files in your current working directory in the path .opencode/skills/<name>/SKILL.md.
+
+
+Before taking any action outside of reading the BOOT.md, interview the user extensively to understand their needs:
+- What specific problems are they trying to solve?
+- What data sources will they work with?
+- What are their preferred tools or libraries?
+- What is their experience level with Python?
+- Any specific requirements or constraints?
+
+Use the AskUserQuestion tool to gather this information. Ask 2-4 focused questions before proceeding.
+
+## After gathering information:
+
+1. **TODO project tracker**: You need to set up a TODO for this bootstrapping task so you don't forget any steps. Validate by reading back the TODOs and the environment.
 1. **Install packages**: Run \`uv add <packages>\` to install Python libraries appropriate for this use case
 2. **Create library structure**: Add modules to src/agent_lib/ that will help with the stated purpose
+3. **Generate SKILLS.md for each skill needed**: Create a SKILL.md at .opencode/skills/<name>/SKILL.md file with the SKILL. 
 3. **Generate AGENTS.md**: Create an AGENTS.md file following these best practices:
 
-## AGENTS.md Guidelines (keep under 150 lines):
+## SKILLS.md Guidelines:
+
+You should always look up best practices for creating SKILLs.md files online before generating one. An extensive web search is recommended.
+
+## AGENTS.md Guidelines:
+
+You should always look up best practices for creating AGENTS.md files online before generating one. An extensive web search is recommended.
 
 ### Required Sections:
 - **Project Overview**: One-sentence description tailored to "${userIntent}"
@@ -647,11 +675,61 @@ Your task:
 - Use code examples, not descriptions
 - Make commands copy-pasteable
 - Prioritize capabilities over file structure
-
-Only create files, install packages, and generate AGENTS.md. Do not ask questions.
 `.trim();
 }
 
+
+// Types for tool completion handling
+type ToolCompletionPart = {
+  tool: string;
+  state: {
+    status: string;
+    input?: Record<string, unknown>;
+    output?: string;
+    metadata?: Record<string, unknown>;
+    title?: string;
+  };
+  id: string;
+};
+
+function handleToolCompletion(
+  ui: import("./bootstrap-prompt").BootstrapUI,
+  part: ToolCompletionPart,
+): void {
+  const { state, tool } = part;
+  const output = state.output;
+  const input = state.input;
+  const metadata = state.metadata;
+  const title = state.title || tool;
+
+  if (tool === "bash" && output?.trim()) {
+    const command = (input?.command as string) || title;
+    const description = input?.description as string | undefined;
+    ui.showBashOutput(command, output, description);
+  } else if (tool === "write" && input?.filePath) {
+    ui.showWriteOutput(input.filePath as string, (input.content as string) || "");
+  } else if (tool === "edit" && metadata?.diff && input?.filePath) {
+    // edit tool: single file, filePath in input
+    ui.showEditOutput(input.filePath as string, metadata.diff as string);
+  } else if (tool === "apply_patch" && metadata?.diff) {
+    // apply_patch: multiple files, extract paths from metadata.files or use title
+    const files = metadata.files as Array<{ filePath?: string; relativePath?: string }> | undefined;
+    const filePath = files?.map(f => f.relativePath || f.filePath).join(", ") || title;
+    ui.showEditOutput(filePath, metadata.diff as string);
+  } else {
+    ui.appendToolStatus("completed", title);
+  }
+}
+
+async function autoApprovePermission(
+  client: import("@opencode-ai/sdk/v2").OpencodeClient,
+  ui: import("./bootstrap-prompt").BootstrapUI,
+  request: { id: string; permission: string; metadata?: Record<string, unknown>; patterns?: string[] },
+): Promise<void> {
+  const description = (request.metadata?.description as string) || (request.metadata?.filepath as string) || request.patterns?.[0] || "";
+  ui.appendText(`[Auto-approving ${request.permission}${description ? `: ${description}` : ""}]\n`);
+  await client.permission.reply({ requestID: request.id, reply: "once" });
+}
 
 async function bootstrapWithOpencode(
   prefix: string,
@@ -659,33 +737,15 @@ async function bootstrapWithOpencode(
   userIntent: string,
   xdgEnv: Record<string, string>,
   ui: import("./bootstrap-prompt").BootstrapUI,
+  client: import("@opencode-ai/sdk/v2").OpencodeClient,
+  url: string,
+  model?: { providerID: string; modelID: string },
 ): Promise<void> {
-  const binDir = join(prefix, "bin");
-  const opencodePath = join(binDir, "opencode");
-
-  // Start opencode server 
-  const port = 4096 + Math.floor(Math.random() * 1000);
-  const url = `http://127.0.0.1:${port}`;
-
-  ui.setStatus(`Starting opencode server on port ${port}...`);
-
-  const serverProc = Bun.spawn([opencodePath, "serve", "--port", String(port)], {
-    cwd: workspacePath,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, ...xdgEnv, PATH: buildPath(prefix) },
-  });
+  ui.setStatus("Sending bootstrap prompt...");
 
   const abort = new AbortController();
 
   try {
-    //  Wait for server ready
-    await waitForServer(url);
-    ui.setStatus("Sending bootstrap prompt...");
-
-    // Import SDK client 
-    const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
-    const client = createOpencodeClient({ baseUrl: url });
 
     // Create session
     const session = await client.session.create({ title: "Bootstrap" });
@@ -709,12 +769,7 @@ async function bootstrapWithOpencode(
             if (event.type === "permission.asked") {
               const request = event.properties;
               if (request.sessionID === sessionId) {
-                const description = request.metadata?.description || request.metadata?.filepath || request.patterns?.[0] || "";
-                ui.appendText(`[Auto-approving ${request.permission}${description ? `: ${description}` : ""}]\n`);
-                await client.permission.reply({
-                  requestID: request.id,
-                  reply: "once",
-                });
+                await autoApprovePermission(client, ui, request);
               }
             }
 
@@ -741,25 +796,11 @@ async function bootstrapWithOpencode(
                     ui.setStatus(`Running: ${title}`);
                     ui.appendToolStatus("running", title);
                   } else if (currentState === "completed") {
-                    const output = (part.state as any).output;
-                    const input = (part.state as any).input;
-                    const metadata = (part.state as any).metadata;
-
-                    // Show bash command output with BlockTool-style container
-                    if (part.tool === "bash" && output?.trim()) {
-                      const command = input?.command || title;
-                      const description = input?.description;
-                      ui.showBashOutput(command, output, description);
-                    } else if (part.tool === "write" && input?.filePath) {
-                      // Show write tool output with file content
-                      ui.showWriteOutput(input.filePath, input.content || "");
-                    } else if (part.tool === "edit" && metadata?.diff) {
-                      // Show edit tool output with diff
-                      ui.showEditOutput(input.filePath, metadata.diff);
-                    } else {
-                      // Other tools: show simple status
-                      ui.appendToolStatus("completed", title);
-                    }
+                    handleToolCompletion(ui, {
+                      tool: part.tool,
+                      state: part.state as ToolCompletionPart["state"],
+                      id: part.id,
+                    });
                   } else if (currentState === "error") {
                     const error = (part.state as any).error || "Unknown error";
                     ui.appendToolStatus("error", `${title}: ${error}`);
@@ -773,6 +814,25 @@ async function bootstrapWithOpencode(
               const { sessionID, diff } = event.properties;
               if (sessionID === sessionId && diff && diff.length > 0) {
                 ui.showDiff(diff);
+              }
+            }
+
+            // Handle question events
+            if (event.type === "question.asked") {
+              const request = event.properties;
+              if (request.sessionID === sessionId) {
+                try {
+                  const answers = await ui.showQuestion(request);
+                  await client.question.reply({
+                    requestID: request.id,
+                    answers,
+                  });
+                } catch (err) {
+                  // User rejected/cancelled the question
+                  await client.question.reject({
+                    requestID: request.id,
+                  });
+                }
               }
             }
 
@@ -800,6 +860,7 @@ async function bootstrapWithOpencode(
     const prompt = buildBootstrapPrompt(userIntent);
     await client.session.promptAsync({
       sessionID: sessionId,
+      model: model,
       parts: [{ type: "text", text: prompt }],
     });
 
@@ -812,9 +873,7 @@ async function bootstrapWithOpencode(
 
     ui.setStatus("Bootstrap complete!");
   } finally {
-    //Cleanup
     abort.abort();
-    serverProc.kill();
   }
 }
 
@@ -871,17 +930,26 @@ async function install(prefix: string): Promise<void> {
     // Create scaffold without AGENTS.md - that will be generated by opencode
     await createWorkspaceScaffold(workspacePath, libraryName, packages, { skipAgentsMd: true });
     await syncWorkspace(prefix, workspacePath);
-    const { runBootstrapPrompt } = await import("./bootstrap-prompt");
 
     try {
-      const intent = await runBootstrapPrompt(async (userIntent, ui) => {
-        await bootstrapWithOpencode(prefix, workspacePath, userIntent, xdgEnv, ui);
-      });
+      const result = await runBootstrapPrompt(
+        async (userIntent, ui, client, serverUrl, model) => {
+          await bootstrapWithOpencode(prefix, workspacePath, userIntent, xdgEnv, ui, client, serverUrl, model);
+        },
+        {
+          prefix,
+          workspacePath,
+          xdgEnv,
+        }
+      );
 
-      if (!intent) {
+      if (!result) {
         // User skipped (Ctrl+C)
         console.log("\nSkipped bootstrap. Using default AGENTS.md.");
         await Bun.write(join(workspacePath, "AGENTS.md"), generateAgentsMd(libraryName));
+      } else {
+        // Kill the server process after bootstrap
+        result.serverProc.kill();
       }
     } catch (err) {
       console.error("\nBootstrap failed:", err);
@@ -1002,7 +1070,7 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPA
   console.log(`Starting opencode server on port ${port}...`);
 
   // Build server command
-  const baseServerCommand = [opencodePath, "serve", "--port", String(port)];
+  const baseServerCommand = [opencodePath, "serve", "--hostname", "0.0.0.0", "--port", String(port)];
   const finalServerCommand = sandboxEnabled
     ? buildSandboxCommand(baseServerCommand, sandboxOpts)
     : baseServerCommand;
@@ -1081,8 +1149,11 @@ export {
   generateAgentsMd,
   generateOpencodeConfig,
   checkSandboxAvailability,
+  handleToolCompletion,
   WORKSPACE_PACKAGES,
 };
+
+export type { ToolCompletionPart };
 
 if (import.meta.main) {
   yargs(process.argv.slice(2))

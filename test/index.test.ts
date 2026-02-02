@@ -20,8 +20,11 @@ import {
   generateAgentsMd,
   generateOpencodeConfig,
   checkSandboxAvailability,
+  handleToolCompletion,
   WORKSPACE_PACKAGES,
+  type ToolCompletionPart,
 } from "../src/index";
+import type { BootstrapUI } from "../src/bootstrap-prompt";
 
 test("expandHome leaves non-tilde paths unchanged", () => {
   expect(expandHome("/tmp/data")).toBe("/tmp/data");
@@ -299,4 +302,207 @@ test("checkSandboxAvailability returns object with available property", async ()
   if (!result.available) {
     expect(typeof result.reason).toBe("string");
   }
+});
+
+import { mock } from "bun:test";
+
+// Helper to create mock UI for handleToolCompletion tests
+function createMockUI(): BootstrapUI & {
+  showBashOutput: ReturnType<typeof mock>;
+  showWriteOutput: ReturnType<typeof mock>;
+  showEditOutput: ReturnType<typeof mock>;
+  appendToolStatus: ReturnType<typeof mock>;
+  showQuestion: ReturnType<typeof mock>;
+} {
+  return {
+    setStatus: mock(() => {}),
+    appendText: mock(() => {}),
+    appendToolStatus: mock(() => {}),
+    showBashOutput: mock(() => {}),
+    showWriteOutput: mock(() => {}),
+    showEditOutput: mock(() => {}),
+    showDiff: mock(() => {}),
+    setSpinnerActive: mock(() => {}),
+    showQuestion: mock(() => Promise.resolve([["Option 1"]])),
+  };
+}
+
+test("handleToolCompletion shows bash output with command and result", () => {
+  const ui = createMockUI();
+  const part: ToolCompletionPart = {
+    tool: "bash",
+    state: {
+      status: "completed",
+      input: { command: "ls -la", description: "List files" },
+      output: "file1.txt\nfile2.txt",
+      title: "ls -la",
+    },
+    id: "tool-1",
+  };
+  handleToolCompletion(ui, part);
+  expect(ui.showBashOutput).toHaveBeenCalledWith("ls -la", "file1.txt\nfile2.txt", "List files");
+});
+
+test("handleToolCompletion shows write output with file path", () => {
+  const ui = createMockUI();
+  const part: ToolCompletionPart = {
+    tool: "write",
+    state: {
+      status: "completed",
+      input: { filePath: "/tmp/test.txt", content: "hello" },
+      title: "Write /tmp/test.txt",
+    },
+    id: "tool-2",
+  };
+  handleToolCompletion(ui, part);
+  expect(ui.showWriteOutput).toHaveBeenCalledWith("/tmp/test.txt", "hello");
+});
+
+test("handleToolCompletion shows edit output with diff", () => {
+  const ui = createMockUI();
+  const part: ToolCompletionPart = {
+    tool: "edit",
+    state: {
+      status: "completed",
+      input: { filePath: "/tmp/test.txt" },
+      metadata: { diff: "--- a/test.txt\n+++ b/test.txt" },
+      title: "Edit /tmp/test.txt",
+    },
+    id: "tool-3",
+  };
+  handleToolCompletion(ui, part);
+  expect(ui.showEditOutput).toHaveBeenCalledWith("/tmp/test.txt", "--- a/test.txt\n+++ b/test.txt");
+});
+
+test("handleToolCompletion shows apply_patch output with diff", () => {
+  const ui = createMockUI();
+  const part: ToolCompletionPart = {
+    tool: "apply_patch",
+    state: {
+      status: "completed",
+      input: { patchText: "*** Begin Patch..." },  // No filePath!
+      metadata: {
+        diff: "--- a/test.txt\n+++ b/test.txt",
+        files: [{ filePath: "/tmp/test.txt", relativePath: "test.txt" }]
+      },
+      title: "Success. Updated the following files:\nM test.txt",
+    },
+    id: "tool-4",
+  };
+  handleToolCompletion(ui, part);
+  expect(ui.showEditOutput).toHaveBeenCalledWith("test.txt", "--- a/test.txt\n+++ b/test.txt");
+});
+
+test("handleToolCompletion shows simple status for unknown tools", () => {
+  const ui = createMockUI();
+  const part: ToolCompletionPart = {
+    tool: "unknown_tool",
+    state: {
+      status: "completed",
+      input: {},
+      title: "Unknown operation",
+    },
+    id: "tool-5",
+  };
+  handleToolCompletion(ui, part);
+  expect(ui.appendToolStatus).toHaveBeenCalledWith("completed", "Unknown operation");
+});
+
+test("handleToolCompletion uses tool name as fallback title", () => {
+  const ui = createMockUI();
+  const part: ToolCompletionPart = {
+    tool: "some_tool",
+    state: {
+      status: "completed",
+      input: {},
+    },
+    id: "tool-6",
+  };
+  handleToolCompletion(ui, part);
+  expect(ui.appendToolStatus).toHaveBeenCalledWith("completed", "some_tool");
+});
+
+// Tests for BootstrapUI interface
+import type { QuestionRequest, QuestionAnswer } from "../src/bootstrap-prompt";
+
+test("BootstrapUI showQuestion interface accepts QuestionRequest", () => {
+  const ui = createMockUI();
+  const request: QuestionRequest = {
+    id: "q1",
+    sessionID: "session1",
+    questions: [
+      {
+        question: "What is your preferred library?",
+        header: "Library",
+        options: [
+          { label: "pandas", description: "Data analysis library" },
+          { label: "polars", description: "Fast DataFrame library" },
+        ],
+        multiple: false,
+      },
+    ],
+  };
+
+  // Should be callable and return a promise
+  const result = ui.showQuestion(request);
+  expect(result).toBeInstanceOf(Promise);
+});
+
+test("QuestionRequest can have multiple questions", () => {
+  const request: QuestionRequest = {
+    id: "q2",
+    sessionID: "session2",
+    questions: [
+      {
+        question: "What data sources?",
+        header: "Sources",
+        options: [
+          { label: "CSV", description: "CSV files" },
+          { label: "Database", description: "SQL database" },
+        ],
+      },
+      {
+        question: "Output format?",
+        header: "Format",
+        options: [
+          { label: "JSON", description: "JSON output" },
+          { label: "Excel", description: "Excel spreadsheet" },
+        ],
+      },
+    ],
+  };
+
+  expect(request.questions).toHaveLength(2);
+  expect(request.questions[0].header).toBe("Sources");
+  expect(request.questions[1].header).toBe("Format");
+});
+
+test("QuestionRequest supports multiple selection", () => {
+  const request: QuestionRequest = {
+    id: "q3",
+    sessionID: "session3",
+    questions: [
+      {
+        question: "Select all features you need",
+        header: "Features",
+        options: [
+          { label: "Charts", description: "Data visualization" },
+          { label: "Export", description: "Export functionality" },
+          { label: "Import", description: "Import functionality" },
+        ],
+        multiple: true,
+      },
+    ],
+  };
+
+  expect(request.questions[0].multiple).toBe(true);
+});
+
+test("QuestionAnswer is an array of selected labels", () => {
+  // QuestionAnswer is Array<string> - one answer per question
+  const singleAnswer: QuestionAnswer = ["pandas"];
+  const multiAnswer: QuestionAnswer = ["Charts", "Export"];
+
+  expect(singleAnswer).toHaveLength(1);
+  expect(multiAnswer).toHaveLength(2);
 });

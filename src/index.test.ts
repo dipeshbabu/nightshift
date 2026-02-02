@@ -56,10 +56,11 @@ describe("buildBootstrapPrompt", () => {
     expect(prompt).toContain("Never do");
   });
 
-  test("instructs not to ask questions", () => {
+  test("instructs to interview the user", () => {
     const prompt = buildBootstrapPrompt("deployment");
 
-    expect(prompt).toContain("Do not ask questions");
+    expect(prompt).toContain("Interview the User");
+    expect(prompt).toContain("AskUserQuestion");
   });
 
   test("keeps under 150 lines guideline", () => {
