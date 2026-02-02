@@ -4,8 +4,8 @@ import { homedir } from "os";
 import { mkdirSync, symlinkSync, existsSync, chmodSync } from "fs";
 import { buildSandboxCommand, type SandboxOptions } from "./sandbox";
 const { runBootstrapPrompt } = await import("./bootstrap-prompt");
-const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
-
+import { bootEval } from "./cli/cmd/eval/boot-agent";
+import { exists } from "fs/promises";
 
 const OPENCODE_VERSION = "v1.1.37"
 const PYTHON_VERSION = "3.13.11";
@@ -1258,6 +1258,51 @@ if (import.meta.main) {
         try {
           const { tui } = await import("./cli/cmd/tui/tui/app");
           await tui(buildAttachTuiArgs(argv.url!, argv.session, process.cwd()));
+        } catch (err) {
+          console.error("Attach failed:", err);
+          process.exit(1);
+        }
+      },
+    )
+    .command(
+      "eval",
+      "Evaluate the agent",
+      (y) =>
+        y
+          .option("evalBoot", {
+            type: "boolean",
+            default: false,
+            describe: "Evaluate the bootstrap process",
+          })
+          .option("filePath", {
+            type: "string",
+            describe: "Path to the eval file",
+          }),
+      async (argv) => {
+        try {
+          if (argv.evalBoot) {
+            if (!argv.filePath) {
+              throw new Error("filePath is required when evalBoot is true");
+            }
+            const result = await bootEval(argv.filePath);
+            // check if eval directory exists
+            const evalDirectory = exists("./eval")
+            if (!evalDirectory) {
+              console.log("Eval directory not found. Creating eval directory...");
+              mkdirSync("./eval");
+            }
+            const randomIdForRun = Math.random().toString().substring(0, 8);
+            console.log(`Boot eval run ID: ${randomIdForRun}`);
+            const evalResultPath = join("./eval", `boot_eval_result_${randomIdForRun}.json`);
+            await Bun.write(
+              evalResultPath,
+              JSON.stringify(result, null, 2),
+            );
+            console.log(`Boot eval result written to ${evalResultPath}`);
+            process.exit(0);
+          } else {
+            console.error("No eval option specified.");
+          }
         } catch (err) {
           console.error("Attach failed:", err);
           process.exit(1);
