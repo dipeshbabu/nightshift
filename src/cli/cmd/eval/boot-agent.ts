@@ -408,7 +408,6 @@ export async function bootEval(pathToTestFile: string): Promise<BootEvalResult> 
               reject(new Error(`Session error: ${JSON.stringify(event.properties)}`));
               return;
             }
-            console.log(JSON.stringify(result, null, 2));
           }
         } catch (err) {
           if (!abort.signal.aborted) reject(err);
@@ -456,6 +455,10 @@ export async function bootEval(pathToTestFile: string): Promise<BootEvalResult> 
     }
 
     console.log("Boot eval complete.");
+    console.log(`=== RESULTS ===`)
+    for (const fileResult of files) {
+      console.log(`File: ${fileResult.file}, Found: ${fileResult.found}`);
+    }
     return { files, fullContent };
 
   } finally {
