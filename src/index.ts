@@ -1059,7 +1059,7 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPA
   console.log(`Starting opencode server on port ${port}...`);
 
   // Build server command
-  const baseServerCommand = [opencodePath, "serve", "--port", String(port)];
+  const baseServerCommand = [opencodePath, "serve", "--hostname", "0.0.0.0", "--port", String(port)];
   const finalServerCommand = sandboxEnabled
     ? buildSandboxCommand(baseServerCommand, sandboxOpts)
     : baseServerCommand;
