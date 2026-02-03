@@ -61,7 +61,10 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/nightshiftco/nightshift"
+      "github": "https://github.com/nightshiftco/nightshift",
+      "slack": "https://join.slack.com/t/nightshiftoss/shared_invite/zt-3p5dshiiq-hjB8558QvURDgqqCI7e8RQ",
+      "twitter": "https://x.com/nightshiftdotsh",
+      "linkedin": "https://www.linkedin.com/company/nightshiftco"
     }
   }
 }
