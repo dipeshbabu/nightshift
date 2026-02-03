@@ -41,6 +41,13 @@
               "agent-routines",
               "agent-routines/bootstrap"
             ]
+          },
+          {
+            "group": "Eval",
+            "pages": [
+              "eval",
+              "eval/boot-eval"
+            ]
           }
         ]
       },
