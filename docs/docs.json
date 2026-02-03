@@ -34,7 +34,8 @@
       {
         "group": "Concepts",
         "pages": [
-          "sandbox"
+          "sandbox",
+          "agent-routines"
         ]
       },
       {

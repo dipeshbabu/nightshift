@@ -990,12 +990,6 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
   if (existsSync(uvToolsBin)) pathParts.unshift(uvToolsBin);
   const PATH = `${pathParts.join(":")}:${process.env.PATH ?? ""}`;
 
-  // Add workspace src to PYTHONPATH
-  const workspaceSrc = join(workspacePath, "src");
-  const PYTHONPATH = existsSync(workspaceSrc)
-    ? `${workspaceSrc}:${process.env.PYTHONPATH ?? ""}`
-    : process.env.PYTHONPATH ?? "";
-
   const xdgEnv = buildXdgEnv(prefix);
   const uvEnv = buildUvEnv(prefix);
 
@@ -1008,7 +1002,6 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
       ...xdgEnv,
       ...uvEnv,
       PATH,
-      PYTHONPATH,
       HOME: process.env.HOME ?? "",
       USER: process.env.USER ?? "",
       TERM: process.env.TERM ?? "xterm-256color",
@@ -1019,14 +1012,11 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
 
   if (useNightshiftTui) {
     // Start opencode as a server and attach nightshift TUI
-    await runWithNightshiftTui(opencode, PATH, PYTHONPATH, workspacePath, args, xdgEnv, sandboxEnabled, sandboxOpts);
+    await runWithNightshiftTui(opencode, PATH, workspacePath, args, xdgEnv, sandboxEnabled, sandboxOpts);
   } else {
     // Standard opencode execution
     console.log(`Launching opencode with isolated PATH`);
     console.log(`  PATH prefix: ${pathParts.join(":")}`);
-    if (existsSync(workspaceSrc)) {
-      console.log(`  PYTHONPATH includes: ${workspaceSrc}`);
-    }
 
     const baseCommand = [opencode, ...args];
     const finalCommand = sandboxEnabled
@@ -1043,7 +1033,6 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
         ...xdgEnv,
         ...uvEnv,
         PATH,
-        PYTHONPATH,
         OPENCODE_EXPERIMENTAL_LSP_TY: "true",
       },
     });
@@ -1053,7 +1042,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
   }
 }
 
-async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPATH: string, workspacePath: string, _args: string[], xdgEnv: Record<string, string>, sandboxEnabled: boolean, sandboxOpts: SandboxOptions): Promise<void> {
+async function runWithNightshiftTui(opencodePath: string, PATH: string, workspacePath: string, _args: string[], xdgEnv: Record<string, string>, sandboxEnabled: boolean, sandboxOpts: SandboxOptions): Promise<void> {
   // Find an available port
   const port = 4096 + Math.floor(Math.random() * 1000);
   const url = `http://127.0.0.1:${port}`;
@@ -1076,7 +1065,6 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPA
       ...xdgEnv,
       ...buildUvEnv(sandboxOpts.prefixPath),
       PATH,
-      PYTHONPATH,
       OPENCODE_EXPERIMENTAL_LSP_TY: "true",
     },
   });
