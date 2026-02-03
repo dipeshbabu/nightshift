@@ -47,7 +47,6 @@
       {
         "group": "Development",
         "pages": [
-          "development",
           "contributing"
         ]
       }
