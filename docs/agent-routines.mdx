@@ -1,0 +1,38 @@
+---
+title: Agent Routines
+description: Autonomous Routines powered by the Agent
+---
+
+<Warning>
+  Nightshift is currently in its infancy and is subject to change and incompleteness.
+  If you find a bug, or have an idea to improve Nightshift, please raise an issue on [Github](https://github.com/nightshiftco/nightshift/tree/main).
+</Warning>
+
+Agent Routines are autonomous workflows where the agent executes multi-step tasks with minimal user intervention. Unlike interactive sessions where you guide the agent step-by-step, routines are pre-defined sequences that the agent completes autonomously.
+
+## Available Routines
+
+| Routine | Trigger | Purpose |
+|---------|---------|---------|
+| [Bootstrap](/agent-routines/bootstrap) | `nightshift install` (new workspace) | Configures workspace based on user intent |
+
+## How Routines Work
+
+Each routine follows a common pattern:
+
+1. **Initialization**: Nightshift sets up the environment and launches an OpenCode server
+2. **User Input (Optional)**: A routine may collect necessary information from the user
+3. **Agent Execution**: The agent receives a specialized prompt and executes autonomously
+4. **Event Streaming (Optional)**: There could be modes where a user will want to se the output of an Agent Routine in real time
+5. **Completion**: The routine finishes 
+
+## Building Custom Routines
+
+Routines are built on top of the OpenCode SDK. The key components are:
+
+- **`@opencode-ai/sdk/v2`** - Client for communicating with the OpenCode server
+- **Event subscription** - Stream events like `message.part.updated`, `question.asked`, `session.idle`
+- **Permission handling** - Auto-approve or prompt for tool permissions
+- **UI callbacks** - Display agent output in a custom interface
+
+See the [Bootstrap Agent Routine](/agent-routines/bootstrap) for a complete implementation example.

@@ -3,6 +3,11 @@ title: Sandbox
 description: Isolation and Security in Nightshift
 ---
 
+<Warning>
+  Nightshift is currently in its infancy and is subject to change and incompleteness.
+  If you find a bug, or have an idea to improve Nightshift, please raise an issue on [Github](https://github.com/nightshiftco/nightshift/tree/main).
+</Warning>
+
 Nightshift provides two layers of isolation for running coding agents safely:
 
 1. **Prefix Isolation** - All tools installed in a self-contained directory
@@ -13,32 +18,119 @@ Nightshift provides two layers of isolation for running coding agents safely:
 When you run `nightshift install --prefix <prefix>`, Nightshift creates a self-contained environment with:
 
 - [OpenCode](https://opencode.ai/) - The coding agent harness
-- [Python](https://github.com/astral-sh/python-build-standalone) - Standalone Python 3.13
-- [uv](https://github.com/astral-sh/uv) - Fast Python package manager
+- [uv](https://github.com/astral-sh/uv) - Python toolchain manager (handles Python installation, packages, and virtual environments)
 - [ripgrep](https://github.com/BurntSushi/ripgrep) - Fast code search
 
 Tools are installed following the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
 
 ```
 <prefix>/
-├── bin/                # Symlinked binaries
+├── bin/                # Symlinked binaries (uv, rg, opencode)
 ├── cache/              # XDG_CACHE_HOME - caches for tools
 ├── config/             # XDG_CONFIG_HOME - configuration files
+├── python/             # uv-managed Python installations
 ├── share/              # XDG_DATA_HOME - application data
 ├── state/              # XDG_STATE_HOME - state/logs
-├── tools/              # Actual downloaded binaries
-├── uv-tools/           # Tools installed via `uv tool`
+├── tools/              # Downloaded tool archives
+├── uv-tools/           # CLI tools installed via `uv tool`
 └── workspace/          # The uv workspace the agent maintains
 ```
 
 ### Environment Variables
 
-When running the agent, Nightshift configures the environment:
+The `run()` function in [`src/index.ts:968`](https://github.com/nightshiftco/nightshift/blob/main/src/index.ts#L968) configures the environment when launching the agent:
 
 - `PATH` includes `workspace/.venv/bin`, `uv-tools/bin`, and `prefix/bin`
-- `PYTHONPATH` points to `workspace/src`
-- XDG variables (`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, etc.) point to prefix subdirectories
+- XDG variables (`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, etc.) point to prefix subdirectories via `buildXdgEnv()`
+- uv variables (`UV_PYTHON_INSTALL_DIR`, `UV_PYTHON_PREFERENCE`) via `buildUvEnv()`
 - `HOME`, `USER`, `TERM`, and `LANG` are passed through from your shell
+
+#### How Python Imports Work
+
+The workspace contains a Python package at `src/<library>/`. When `uv sync` runs, it installs this package in **editable mode** into the virtual environment's `site-packages`. This means `from agent_lib.utils import hello` works automatically.
+
+Since `PATH` places `.venv/bin` first, both `python script.py` and `uv run python script.py` use the same interpreter with the editable install—no `PYTHONPATH` manipulation needed.
+
+## Python Management with uv
+
+Nightshift delegates all Python management to [uv](https://docs.astral.sh/uv/), Astral's fast Python toolchain. This provides complete isolation from any system Python installation.
+
+### How It Works
+
+The `syncWorkspace()` function in [`src/index.ts:553`](https://github.com/nightshiftco/nightshift/blob/main/src/index.ts#L553) runs `uv sync` during installation. When executed, uv automatically:
+
+1. **Downloads Python** from [python-build-standalone](https://github.com/astral-sh/python-build-standalone) if no suitable version exists
+2. **Creates a virtual environment** at `workspace/.venv`
+3. **Installs dependencies** from `pyproject.toml`
+4. **Locks versions** in `uv.lock` for reproducibility
+
+### Environment Configuration
+
+The `buildUvEnv()` helper in [`src/index.ts:181`](https://github.com/nightshiftco/nightshift/blob/main/src/index.ts#L181) configures uv with two environment variables:
+
+```typescript
+function buildUvEnv(prefix: string): Record<string, string> {
+  return {
+    UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
+    UV_PYTHON_PREFERENCE: "only-managed",
+  };
+}
+```
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `UV_PYTHON_INSTALL_DIR` | `<prefix>/python` | Store Python installations inside the prefix |
+| `UV_PYTHON_PREFERENCE` | `only-managed` | Ignore system Python, only use uv-managed versions |
+
+This ensures agents always use an isolated Python, even if the host has Python installed.
+
+### Python Version
+
+The `generateRootPyproject()` function in [`src/index.ts:336`](https://github.com/nightshiftco/nightshift/blob/main/src/index.ts#L336) generates a `pyproject.toml` with:
+
+```toml
+requires-python = ">=3.13"
+```
+
+When uv syncs, it downloads the latest Python 3.13.x to `<prefix>/python/`. The virtual environment at `workspace/.venv/bin/python` links to this installation.
+
+### Package Management
+
+Agents are instructued to manage dependencies using uv commands:
+
+```bash
+# Add a package
+uv add requests
+
+# Add a dev dependency
+uv add --dev pytest
+
+# Sync environment (install all dependencies)
+uv sync
+
+# Run a command in the virtual environment
+uv run python script.py
+uv run pytest
+```
+
+### CLI Tools
+
+The `installUvTools()` function in [`src/index.ts:572`](https://github.com/nightshiftco/nightshift/blob/main/src/index.ts#L572) uses `uv tool` to install standalone CLI tools:
+
+```typescript
+const proc = Bun.spawn([uv, "tool", "install", "ty"], {
+  env: {
+    ...process.env,
+    ...buildUvEnv(prefix),
+    UV_TOOL_DIR: toolDir,
+    UV_TOOL_BIN_DIR: toolBinDir,
+  },
+});
+```
+
+Tools are installed to `<prefix>/uv-tools/` to keep them separate from the workspace. Currently, Nightshift installs [ty](https://docs.astral.sh/ty/) (the type checker) this way.
+
+This also ensures that Opencode will have an LSP to use when running regardless of if there is one installed on the host system.
 
 ## Workspace Structure
 
@@ -47,7 +139,7 @@ The workspace is a uv-managed Python project that the agent maintains:
 ```
 workspace/
 ├── .opencode/              # OpenCode configuration and skills
-│   └── skills/             # Agent-created skill definitions
+│   └── skills/             # Agent-created skill definitions (generated at boot)
 │       └── <skill>/
 │           └── SKILL.md
 ├── .venv/                  # Python virtual environment (managed by uv)
@@ -65,7 +157,7 @@ workspace/
 
 ### Bootstrap Process
 
-During installation, Nightshift runs a bootstrap process where the agent:
+During installation, Nightshift runs a bootstrap [Agent Routine](https://docs.nightshift.sh/agent-routines) process where the agent:
 1. Reads a user-provided `BOOT.md` file (if present) describing the intended use case
 2. Interviews the user about their requirements
 3. Installs appropriate packages via `uv add`
@@ -96,27 +188,6 @@ Sandbox mode provides **filesystem write protection** - the host filesystem beco
 **Linux** uses [Bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`):
 - Install with: `apt install bubblewrap` (Debian/Ubuntu) or `dnf install bubblewrap` (Fedora)
 - Creates a containerized environment with bind mounts
-
-**Windows** is not currently supported for sandbox mode.
-
-### What Sandbox Mode Protects
-
-| Access Type | Without Sandbox | With Sandbox |
-|-------------|-----------------|--------------|
-| Read any file | ✅ Allowed | ✅ Allowed |
-| Write to workspace | ✅ Allowed | ✅ Allowed |
-| Write to prefix | ✅ Allowed | ✅ Allowed |
-| Write to `/tmp` | ✅ Allowed | ✅ Allowed |
-| Write elsewhere | ✅ Allowed | ❌ Denied |
-| Network access | ✅ Allowed | ✅ Allowed |
-| Process execution | ✅ Allowed | ✅ Allowed |
-
-### When to Use Sandbox Mode
-
-Enable sandbox mode when:
-- Running agents on sensitive systems
-- Testing untrusted prompts or configurations
-- You want defense-in-depth protection
 
 Sandbox mode is optional because:
 - Some legitimate workflows need broader filesystem access

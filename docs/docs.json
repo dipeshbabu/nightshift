@@ -34,13 +34,19 @@
       {
         "group": "Concepts",
         "pages": [
-          "sandbox"
+          "sandbox",
+          {
+            "group": "Agent Routines",
+            "pages": [
+              "agent-routines",
+              "agent-routines/bootstrap"
+            ]
+          }
         ]
       },
       {
         "group": "Development",
         "pages": [
-          "development",
           "contributing"
         ]
       }
