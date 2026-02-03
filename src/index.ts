@@ -7,8 +7,6 @@ const { runBootstrapPrompt } = await import("./bootstrap-prompt");
 import { bootEval } from "./cli/cmd/eval/boot-agent";
 
 const OPENCODE_VERSION = "v1.1.37"
-const PYTHON_VERSION = "3.13.11";
-const PYTHON_RELEASE = "20260127";
 const UV_VERSION = "0.9.27";
 const RIPGREP_VERSION = "15.1.0";
 
@@ -180,6 +178,13 @@ function buildXdgEnv(prefix: string): Record<string, string> {
   };
 }
 
+function buildUvEnv(prefix: string): Record<string, string> {
+  return {
+    UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
+    UV_PYTHON_PREFERENCE: "only-managed",
+  };
+}
+
 async function checkSandboxAvailability(): Promise<{ available: boolean; reason?: string }> {
   if (process.platform === "darwin") {
     // macOS has sandbox-exec built-in
@@ -205,18 +210,6 @@ async function checkSandboxAvailability(): Promise<{ available: boolean; reason?
   return {
     available: false,
     reason: "Sandbox is not supported on this platform",
-  };
-}
-
-function pythonUrl(p: Platform): { url: string; extractedBinary: string } {
-  const triple =
-    p.os === "darwin"
-      ? `${p.arch}-apple-darwin`
-      : `${p.arch}-unknown-linux-gnu`;
-  const encoded = `cpython-${PYTHON_VERSION}%2B${PYTHON_RELEASE}-${triple}-install_only.tar.gz`;
-  return {
-    url: `https://github.com/indygreg/python-build-standalone/releases/download/${PYTHON_RELEASE}/${encoded}`,
-    extractedBinary: "python/bin/python3",
   };
 }
 
@@ -347,7 +340,7 @@ function generateRootPyproject(libraryName: string, packages: string[]): string 
 name = "${libraryName}"
 version = "0.1.0"
 description = "Agent-maintained Python library"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
 ${depsStr}
 ]
@@ -567,6 +560,7 @@ async function syncWorkspace(prefix: string, workspacePath: string): Promise<voi
     stderr: "inherit",
     env: {
       ...process.env,
+      ...buildUvEnv(prefix),
       PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
     },
   });
@@ -586,6 +580,7 @@ async function installUvTools(prefix: string): Promise<void> {
     stderr: "inherit",
     env: {
       ...process.env,
+      ...buildUvEnv(prefix),
       PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
       UV_TOOL_DIR: toolDir,
       UV_TOOL_BIN_DIR: toolBinDir,
@@ -884,12 +879,6 @@ async function install(prefix: string): Promise<void> {
   const platform = detectPlatform();
   console.log(`Detected platform: ${platform.os} / ${platform.arch}`);
 
-  const py = pythonUrl(platform);
-  await installTool("python", py.url, prefix, [
-    { linkName: "python3", target: py.extractedBinary },
-    { linkName: "python", target: py.extractedBinary },
-  ]);
-
   const uv = uvUrl(platform);
   await installTool("uv", uv.url, prefix, [
     { linkName: "uv", target: uv.extractedBinary },
@@ -1008,6 +997,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
     : process.env.PYTHONPATH ?? "";
 
   const xdgEnv = buildXdgEnv(prefix);
+  const uvEnv = buildUvEnv(prefix);
 
   // Build sandbox options
   const sandboxOpts: SandboxOptions = {
@@ -1016,6 +1006,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
     binDir,
     env: {
       ...xdgEnv,
+      ...uvEnv,
       PATH,
       PYTHONPATH,
       HOME: process.env.HOME ?? "",
@@ -1050,6 +1041,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
       env: sandboxEnabled ? sandboxOpts.env : {
         ...process.env,
         ...xdgEnv,
+        ...uvEnv,
         PATH,
         PYTHONPATH,
         OPENCODE_EXPERIMENTAL_LSP_TY: "true",
@@ -1082,6 +1074,7 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPA
     env: sandboxEnabled ? sandboxOpts.env : {
       ...process.env,
       ...xdgEnv,
+      ...buildUvEnv(sandboxOpts.prefixPath),
       PATH,
       PYTHONPATH,
       OPENCODE_EXPERIMENTAL_LSP_TY: "true",
@@ -1131,13 +1124,13 @@ export {
   readFullConfig,
   saveActivePrefix,
   opencodeUrl,
-  pythonUrl,
   uvUrl,
   ripgrepUrl,
   extractExtraArgs,
   resolveRunOptions,
   buildAttachTuiArgs,
   buildXdgEnv,
+  buildUvEnv,
   buildPath,
   buildBootstrapPrompt,
   waitForServer,

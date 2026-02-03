@@ -11,6 +11,7 @@ import {
   resolveRunOptions,
   buildAttachTuiArgs,
   buildXdgEnv,
+  buildUvEnv,
   readFullConfig,
   saveActivePrefix,
   generateRootPyproject,
@@ -212,6 +213,11 @@ test("generateRootPyproject converts dashes to underscores in package path", () 
   expect(pyproject).toContain('packages = ["src/my_lib"]');
 });
 
+test("generateRootPyproject requires Python 3.13+", () => {
+  const pyproject = generateRootPyproject("agent_lib", ["numpy"]);
+  expect(pyproject).toContain('requires-python = ">=3.13"');
+});
+
 test("generateUtilsPy includes library name in docstring and hello function", () => {
   const utils = generateUtilsPy("agent_lib");
   expect(utils).toContain("Utility functions for agent_lib");
@@ -286,6 +292,22 @@ test("buildXdgEnv works with different prefix paths", () => {
   expect(xdgEnv.XDG_DATA_HOME).toBe("/tmp/test-nightshift/share");
   expect(xdgEnv.XDG_CACHE_HOME).toBe("/tmp/test-nightshift/cache");
   expect(xdgEnv.XDG_STATE_HOME).toBe("/tmp/test-nightshift/state");
+});
+
+test("buildUvEnv sets UV_PYTHON_INSTALL_DIR to prefix/python", () => {
+  const uvEnv = buildUvEnv("/home/user/.nightshift");
+  expect(uvEnv.UV_PYTHON_INSTALL_DIR).toBe("/home/user/.nightshift/python");
+});
+
+test("buildUvEnv sets UV_PYTHON_PREFERENCE to only-managed", () => {
+  const uvEnv = buildUvEnv("/home/user/.nightshift");
+  expect(uvEnv.UV_PYTHON_PREFERENCE).toBe("only-managed");
+});
+
+test("buildUvEnv works with different prefix paths", () => {
+  const uvEnv = buildUvEnv("/tmp/test-nightshift");
+  expect(uvEnv.UV_PYTHON_INSTALL_DIR).toBe("/tmp/test-nightshift/python");
+  expect(uvEnv.UV_PYTHON_PREFERENCE).toBe("only-managed");
 });
 
 test("checkSandboxAvailability returns available on darwin", async () => {
