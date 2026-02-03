@@ -1,0 +1,242 @@
+---
+title: Boot Eval
+description: Evaluating Bootstrap Output Quality
+---
+
+<Warning>
+  Nightshift is currently in its infancy and is subject to change and incompleteness.
+  If you find a bug, or have an idea to improve Nightshift, please raise an issue on [Github](https://github.com/nightshiftco/nightshift/tree/main).
+</Warning>
+
+The Boot Eval measures how well an LLM model performs the [Bootstrap Agent Routine](/agent-routines/bootstrap). It scores the quality of generated `AGENTS.md` and `SKILL.md` files across five dimensions.
+
+## Running a Boot Eval
+
+```bash
+nightshift eval --evalBoot --filePath <path-to-config.json> --runs <number>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--evalBoot` | Evaluate the bootstrap process |
+| `--filePath` | Path to eval configuration JSON |
+| `--runs` | Number of evaluation runs (default: 1) |
+
+## Configuration File
+
+The eval configuration specifies what to test and what outputs to expect:
+
+```json
+{
+  "inputPath": "/path/to/BOOT.md",
+  "model": "openai/gpt-4o",
+  "output": {
+    "skillsPaths": [
+      ".opencode/skills/data-schema/SKILL.md",
+      ".opencode/skills/analytics/SKILL.md"
+    ],
+    "agentsMdPath": "AGENTS.md"
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `inputPath` | Path to `BOOT.md` file containing user intent |
+| `model` | Model identifier in `provider/model` format |
+| `output.skillsPaths` | Expected skill files the agent should generate |
+| `output.agentsMdPath` | Expected `AGENTS.md` location |
+
+### Supported Providers
+
+The eval system detects the provider from the model string and looks for the corresponding API key:
+
+| Provider | Model Prefix | Environment Variable |
+|----------|--------------|---------------------|
+| Anthropic | `anthropic/` | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai/` | `OPENAI_API_KEY` |
+
+If the key isn't found in the environment, you'll be prompted to enter it.
+
+## Execution Flow
+
+The `bootEval()` function in [`src/cli/cmd/eval/boot-agent.ts:436`](https://github.com/nightshiftco/nightshift/blob/main/src/cli/cmd/eval/boot-agent.ts#L436) orchestrates the evaluation:
+
+1. **Environment Setup**: Creates isolated temp directories at `/tmp/booteval-{timestamp}-{random}/`
+2. **Tool Installation**: Downloads and installs uv, ripgrep, and OpenCode into the temp prefix
+3. **Server Launch**: Starts an OpenCode server on a random port (4096-5095)
+4. **Agent Execution**: Sends the bootstrap prompt and streams events
+5. **Output Collection**: Gathers generated files from the workspace
+6. **LLM Grading**: Scores each file using GPT-4o as judge
+7. **Cleanup**: Removes temp directories and stops the server
+
+All permissions are auto-approved during evals to allow uninterrupted execution.
+
+## Grading System
+
+Each generated file is scored across five dimensions (0-20 points each) for a total of 0-100 points.
+
+### SKILL.md Dimensions
+
+The `skillGraderPrompt()` function in [`src/cli/cmd/eval/boot-agent.ts:116`](https://github.com/nightshiftco/nightshift/blob/main/src/cli/cmd/eval/boot-agent.ts#L116) defines the grading criteria:
+
+| Dimension | What It Measures |
+|-----------|------------------|
+| **D1 - Knowledge Delta** | Expert knowledge the model can't derive from first principles - decision trees, non-obvious trade-offs, domain heuristics |
+| **D2 - Specificity & Actionability** | Concrete, executable instructions - copy-pasteable commands, real file paths, no interpretation needed |
+| **D3 - Anti-Patterns & Safety** | Explicit NEVER/ALWAYS/ASK-FIRST rules with concrete reasons and specific failure modes |
+| **D4 - Structure & Discoverability** | Clear description for routing, progressive disclosure, concise enough to fit in context |
+| **D5 - Tailoring to User Intent** | Customization to the stated purpose, tech stack, and actual project structure |
+
+### AGENTS.md Dimensions
+
+The `agentsMdGraderPrompt()` function in [`src/cli/cmd/eval/boot-agent.ts:178`](https://github.com/nightshiftco/nightshift/blob/main/src/cli/cmd/eval/boot-agent.ts#L178) defines complementary criteria:
+
+| Dimension | What It Measures |
+|-----------|------------------|
+| **D1 - Project Specificity** | Real package names, file paths, architecture decisions - could only belong to this project |
+| **D2 - Command Accuracy** | Exact, copy-pasteable build/test/lint/run commands verified to work |
+| **D3 - Safety Boundaries** | Three clear tiers (ALWAYS/ASK FIRST/NEVER) naming specific commands and files |
+| **D4 - Code Style Concreteness** | Formatting rules shown through code examples, not prose descriptions |
+| **D5 - Skill Catalog & Routing** | Every skill listed with exact path and one-line description of when to use it |
+
+### Score Interpretation
+
+| Score Range | Meaning |
+|-------------|---------|
+| 16-20 | Excellent - genuinely useful, specific, actionable |
+| 11-15 | Good - mix of useful content with some generic filler |
+| 6-10 | Adequate - mostly restates common knowledge |
+| 0-5 | Poor - generic, template-like, no project-specific value |
+
+The grading is intentionally harsh. A score of 15+ on any dimension indicates genuinely excellent work.
+
+## Output Format
+
+Results are saved to `./eval/{provider}/{model}/boot_eval_result_{run}_{id}.json`:
+
+```json
+{
+  "files": [
+    {
+      "file": ".opencode/skills/purchasing/SKILL.md",
+      "type": "skill",
+      "found": true,
+      "content": "# Purchasing...",
+      "llmScores": {
+        "D1": 18,
+        "D2": 15,
+        "D3": 14,
+        "D4": 17,
+        "D5": 13,
+        "total": 77
+      }
+    },
+    {
+      "file": "AGENTS.md",
+      "type": "agentsMd",
+      "found": true,
+      "content": "# Project...",
+      "llmScores": {
+        "D1": 16,
+        "D2": 15,
+        "D3": 15,
+        "D4": 17,
+        "D5": 16,
+        "total": 79
+      }
+    }
+  ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `file` | Relative path to the generated file |
+| `type` | Either `skill` or `agentsMd` |
+| `found` | Whether the file was generated |
+| `content` | Full file contents (for analysis) |
+| `llmScores` | Dimension scores and total |
+
+Files that weren't generated receive all zeros.
+
+## Example Results
+
+Here's an example comparing model performance on a supply chain analytics workspace:
+
+| File | D1 | D2 | D3 | D4 | D5 | Total |
+|------|-----|-----|-----|-----|-----|-------|
+| odoo-schema/SKILL.md | 12 | 13 | 8 | 14 | 12 | 59 |
+| purchasing/SKILL.md | 18 | 15 | 14 | 17 | 13 | 77 |
+| analytics/SKILL.md | 12 | 19 | 10 | 13 | 12 | 66 |
+| formulas/SKILL.md | 13 | 14 | 10 | 13 | 13 | 63 |
+| AGENTS.md | 16 | 15 | 15 | 17 | 16 | 79 |
+
+This data helps identify:
+- **Model strengths**: High D2 scores indicate good actionability
+- **Model weaknesses**: Low D3 scores suggest poor safety boundary definition
+- **Skill-specific patterns**: Some models excel at certain skill types
+
+## Architecture
+
+```
+┌─ EVAL CONFIG ──────────────────┐
+│  inputPath: BOOT.md            │
+│  model: provider/model         │
+│  output: expected files        │
+└───────────────┬────────────────┘
+                │
+                ▼
+┌─ ISOLATED ENVIRONMENT ─────────┐
+│  /tmp/booteval-{id}/           │
+│  ├── prefix/ (tools)           │
+│  └── workspace/ (agent work)   │
+└───────────────┬────────────────┘
+                │
+                ▼
+┌─ OPENCODE SESSION ─────────────┐
+│  Bootstrap prompt execution    │
+│  Event streaming               │
+│  Auto-approved permissions     │
+└───────────────┬────────────────┘
+                │
+                ▼
+┌─ OUTPUT COLLECTION ────────────┐
+│  SKILL.md files                │
+│  AGENTS.md                     │
+└───────────────┬────────────────┘
+                │
+                ▼
+┌─ LLM-AS-JUDGE GRADING ─────────┐
+│  GPT-4o scores each file       │
+│  5 dimensions × 0-20 points    │
+└───────────────┬────────────────┘
+                │
+                ▼
+┌─ RESULTS JSON ─────────────────┐
+│  ./eval/{provider}/{model}/    │
+│  boot_eval_result_{run}.json   │
+└────────────────────────────────┘
+```
+
+## Multi-Run Evaluations
+
+LLM outputs are non-deterministic. Run multiple evaluations to get statistically meaningful results:
+
+```bash
+nightshift eval --evalBoot --filePath config.json --runs 5
+```
+
+Each run produces a separate result file. Aggregate scores across runs to understand:
+- Average performance per dimension
+- Score variance (consistency)
+- Best/worst case outputs
+
+## Creating Custom Boot Evals
+
+To evaluate a new use case:
+
+1. **Write a BOOT.md** describing the workspace purpose and any pre-defined skills
+2. **Create the eval config** with the model to test and expected outputs
+3. **Run the eval** and analyze results
+4. **Iterate** by adjusting the BOOT.md or trying different models
