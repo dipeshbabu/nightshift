@@ -8,21 +8,29 @@ description: Install Nightshift and its dependencies
 Before installing Nightshift, ensure you have:
 
 - macOS or Linux (x64 or arm64)
-- [Bun](https://bun.sh) installed and on PATH
-- System tools: `curl`, `tar`, and `unzip`
-- Network access to GitHub releases
+- A modern terminal emulator like [Ghostty](https://ghostty.org)
+- Network access 
 
-## Install from source
+## Download the binary 
 
-Clone the repository and install dependencies:
+The most straight forward way to install Nightshift is by using the curl command below:
 
 ```bash
-git clone https://github.com/nightshiftco/nightshift.git
-cd nightshift
-bun install
+curl https://nightshift.sh/install | sh
 ```
 
-Build a single binary for your current platform:
+this will run a shell script that downloads and installs the latest release of Nightshift from our distrubution channel.
+
+## Build from source
+
+Nightshift is a [Bun](https://bun.com/) project and is able to compile down to a single binary for your architecture.
+
+Clone the repository:
+
+```bash
+git clone git@github.com:nightshiftco/nightshift.git
+cd nightshift
+```
 
 ```bash
 bun run build:single
@@ -32,7 +40,7 @@ The binary will be output to `dist/nightshift-<os>-<arch>/bin/nightshift`.
 
 ## Toolchain layout
 
-Nightshift installs into a prefix directory you control:
+Nightshift installs into a prefix directory you control, you can think of this as the agent's profile:
 
 ```
 <prefix>/
@@ -40,6 +48,7 @@ Nightshift installs into a prefix directory you control:
   tools/        # extracted tool archives
   venvs/
     data-science/  # numpy + pandas
+  workspace/    # writeable uv workspace
 ```
 
-Pinned tool versions live in `src/index.ts` so you can update them centrally.
+Pinned tool versions live in `src/index.ts` so you can update them centrally. We're working on making this more streamlined.
