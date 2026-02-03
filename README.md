@@ -2,11 +2,11 @@
 
 Nightshift is a Bun-native CLI that installs and runs OpenCode in an isolated, reproducible toolchain, with an optional custom TUI built on OpenTUI + Solid.
 
-It is designed for teams that want a consistent OpenCode environment (pinned tool versions, bundled Python tooling, and a focused terminal UI) without relying on system installs.
+It is designed for teams that want a consistent OpenCode environment (pinned tool versions, Python tooling managed by uv, and a focused terminal UI) without relying on system installs.
 
 ## What you get
 
-- An isolated toolchain in a prefix directory (OpenCode, Python, uv, ripgrep).
+- An isolated toolchain in a prefix directory (OpenCode, uv, ripgrep). Python is automatically managed by uv.
 - A data-science venv with NumPy and pandas preinstalled.
 - A Nightshift TUI that attaches to an OpenCode server and adds session, model, and command workflows.
 - A single Bun-driven build pipeline that emits standalone binaries.
@@ -80,8 +80,9 @@ Nightshift installs into a prefix you control:
 
 ```
 <prefix>/
-  bin/          # symlinks: opencode, python, uv, rg
+  bin/          # symlinks: opencode, uv, rg
   tools/        # extracted tool archives
+  python/       # uv-managed Python installations
   venvs/
     data-science/  # numpy + pandas
 ```

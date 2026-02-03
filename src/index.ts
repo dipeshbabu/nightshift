@@ -7,8 +7,6 @@ const { runBootstrapPrompt } = await import("./bootstrap-prompt");
 import { bootEval } from "./cli/cmd/eval/boot-agent";
 
 const OPENCODE_VERSION = "v1.1.37"
-const PYTHON_VERSION = "3.13.11";
-const PYTHON_RELEASE = "20260127";
 const UV_VERSION = "0.9.27";
 const RIPGREP_VERSION = "15.1.0";
 
@@ -208,18 +206,6 @@ async function checkSandboxAvailability(): Promise<{ available: boolean; reason?
   };
 }
 
-function pythonUrl(p: Platform): { url: string; extractedBinary: string } {
-  const triple =
-    p.os === "darwin"
-      ? `${p.arch}-apple-darwin`
-      : `${p.arch}-unknown-linux-gnu`;
-  const encoded = `cpython-${PYTHON_VERSION}%2B${PYTHON_RELEASE}-${triple}-install_only.tar.gz`;
-  return {
-    url: `https://github.com/indygreg/python-build-standalone/releases/download/${PYTHON_RELEASE}/${encoded}`,
-    extractedBinary: "python/bin/python3",
-  };
-}
-
 function uvUrl(p: Platform): { url: string; extractedBinary: string } {
   const triple =
     p.os === "darwin"
@@ -347,7 +333,7 @@ function generateRootPyproject(libraryName: string, packages: string[]): string 
 name = "${libraryName}"
 version = "0.1.0"
 description = "Agent-maintained Python library"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
 ${depsStr}
 ]
@@ -568,6 +554,8 @@ async function syncWorkspace(prefix: string, workspacePath: string): Promise<voi
     env: {
       ...process.env,
       PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
+      UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
+      UV_PYTHON_PREFERENCE: "only-managed",
     },
   });
   const exitCode = await proc.exited;
@@ -589,6 +577,8 @@ async function installUvTools(prefix: string): Promise<void> {
       PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
       UV_TOOL_DIR: toolDir,
       UV_TOOL_BIN_DIR: toolBinDir,
+      UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
+      UV_PYTHON_PREFERENCE: "only-managed",
     },
   });
   const exitCode = await proc.exited;
@@ -884,12 +874,6 @@ async function install(prefix: string): Promise<void> {
   const platform = detectPlatform();
   console.log(`Detected platform: ${platform.os} / ${platform.arch}`);
 
-  const py = pythonUrl(platform);
-  await installTool("python", py.url, prefix, [
-    { linkName: "python3", target: py.extractedBinary },
-    { linkName: "python", target: py.extractedBinary },
-  ]);
-
   const uv = uvUrl(platform);
   await installTool("uv", uv.url, prefix, [
     { linkName: "uv", target: uv.extractedBinary },
@@ -1023,6 +1007,8 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
       TERM: process.env.TERM ?? "xterm-256color",
       LANG: process.env.LANG ?? "en_US.UTF-8",
       OPENCODE_EXPERIMENTAL_LSP_TY: "true",
+      UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
+      UV_PYTHON_PREFERENCE: "only-managed",
     },
   };
 
@@ -1053,6 +1039,8 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
         PATH,
         PYTHONPATH,
         OPENCODE_EXPERIMENTAL_LSP_TY: "true",
+        UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
+        UV_PYTHON_PREFERENCE: "only-managed",
       },
     });
 
@@ -1085,6 +1073,8 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPA
       PATH,
       PYTHONPATH,
       OPENCODE_EXPERIMENTAL_LSP_TY: "true",
+      UV_PYTHON_INSTALL_DIR: join(sandboxOpts.prefixPath, "python"),
+      UV_PYTHON_PREFERENCE: "only-managed",
     },
   });
 
@@ -1131,7 +1121,6 @@ export {
   readFullConfig,
   saveActivePrefix,
   opencodeUrl,
-  pythonUrl,
   uvUrl,
   ripgrepUrl,
   extractExtraArgs,
