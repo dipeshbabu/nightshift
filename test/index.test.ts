@@ -315,14 +315,14 @@ function createMockUI(): BootstrapUI & {
   showQuestion: ReturnType<typeof mock>;
 } {
   return {
-    setStatus: mock(() => {}),
-    appendText: mock(() => {}),
-    appendToolStatus: mock(() => {}),
-    showBashOutput: mock(() => {}),
-    showWriteOutput: mock(() => {}),
-    showEditOutput: mock(() => {}),
-    showDiff: mock(() => {}),
-    setSpinnerActive: mock(() => {}),
+    setStatus: mock(() => { }),
+    appendText: mock(() => { }),
+    appendToolStatus: mock(() => { }),
+    showBashOutput: mock(() => { }),
+    showWriteOutput: mock(() => { }),
+    showEditOutput: mock(() => { }),
+    showDiff: mock(() => { }),
+    setSpinnerActive: mock(() => { }),
     showQuestion: mock(() => Promise.resolve([["Option 1"]])),
   };
 }

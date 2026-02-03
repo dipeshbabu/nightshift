@@ -20,6 +20,7 @@
     "diff": "^7.0.0",
     "fuzzysort": "^3.1.0",
     "open": "^10.1.2",
+    "openai": "^6.17.0",
     "opentui-spinner": "0.0.6",
     "pngjs": "^7.0.0",
     "remeda": "^2.21.0",

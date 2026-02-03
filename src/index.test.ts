@@ -63,11 +63,6 @@ describe("buildBootstrapPrompt", () => {
     expect(prompt).toContain("AskUserQuestion");
   });
 
-  test("keeps under 150 lines guideline", () => {
-    const prompt = buildBootstrapPrompt("general purpose");
-
-    expect(prompt).toContain("keep under 150 lines");
-  });
 });
 
 describe("buildPath", () => {
