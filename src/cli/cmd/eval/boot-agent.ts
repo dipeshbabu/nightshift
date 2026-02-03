@@ -8,6 +8,7 @@ import {
   ripgrepUrl,
   opencodeUrl,
   buildXdgEnv,
+  buildUvEnv,
   buildPath,
   waitForServer,
 } from "../../../index";
@@ -470,7 +471,7 @@ export async function bootEval(pathToTestFile: string): Promise<BootEvalResult> 
       cwd: workspace,
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, ...xdgEnv, PATH: buildPath(prefix), UV_PYTHON_INSTALL_DIR: join(prefix, "python"), UV_PYTHON_PREFERENCE: "only-managed" },
+      env: { ...process.env, ...xdgEnv, ...buildUvEnv(prefix), PATH: buildPath(prefix) },
     });
 
     // Wait for server

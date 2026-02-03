@@ -178,6 +178,13 @@ function buildXdgEnv(prefix: string): Record<string, string> {
   };
 }
 
+function buildUvEnv(prefix: string): Record<string, string> {
+  return {
+    UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
+    UV_PYTHON_PREFERENCE: "only-managed",
+  };
+}
+
 async function checkSandboxAvailability(): Promise<{ available: boolean; reason?: string }> {
   if (process.platform === "darwin") {
     // macOS has sandbox-exec built-in
@@ -553,9 +560,8 @@ async function syncWorkspace(prefix: string, workspacePath: string): Promise<voi
     stderr: "inherit",
     env: {
       ...process.env,
+      ...buildUvEnv(prefix),
       PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
-      UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
-      UV_PYTHON_PREFERENCE: "only-managed",
     },
   });
   const exitCode = await proc.exited;
@@ -574,11 +580,10 @@ async function installUvTools(prefix: string): Promise<void> {
     stderr: "inherit",
     env: {
       ...process.env,
+      ...buildUvEnv(prefix),
       PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
       UV_TOOL_DIR: toolDir,
       UV_TOOL_BIN_DIR: toolBinDir,
-      UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
-      UV_PYTHON_PREFERENCE: "only-managed",
     },
   });
   const exitCode = await proc.exited;
@@ -992,6 +997,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
     : process.env.PYTHONPATH ?? "";
 
   const xdgEnv = buildXdgEnv(prefix);
+  const uvEnv = buildUvEnv(prefix);
 
   // Build sandbox options
   const sandboxOpts: SandboxOptions = {
@@ -1000,6 +1006,7 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
     binDir,
     env: {
       ...xdgEnv,
+      ...uvEnv,
       PATH,
       PYTHONPATH,
       HOME: process.env.HOME ?? "",
@@ -1007,8 +1014,6 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
       TERM: process.env.TERM ?? "xterm-256color",
       LANG: process.env.LANG ?? "en_US.UTF-8",
       OPENCODE_EXPERIMENTAL_LSP_TY: "true",
-      UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
-      UV_PYTHON_PREFERENCE: "only-managed",
     },
   };
 
@@ -1036,11 +1041,10 @@ async function run(prefix: string, args: string[], useNightshiftTui: boolean, sa
       env: sandboxEnabled ? sandboxOpts.env : {
         ...process.env,
         ...xdgEnv,
+        ...uvEnv,
         PATH,
         PYTHONPATH,
         OPENCODE_EXPERIMENTAL_LSP_TY: "true",
-        UV_PYTHON_INSTALL_DIR: join(prefix, "python"),
-        UV_PYTHON_PREFERENCE: "only-managed",
       },
     });
 
@@ -1070,11 +1074,10 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, PYTHONPA
     env: sandboxEnabled ? sandboxOpts.env : {
       ...process.env,
       ...xdgEnv,
+      ...buildUvEnv(sandboxOpts.prefixPath),
       PATH,
       PYTHONPATH,
       OPENCODE_EXPERIMENTAL_LSP_TY: "true",
-      UV_PYTHON_INSTALL_DIR: join(sandboxOpts.prefixPath, "python"),
-      UV_PYTHON_PREFERENCE: "only-managed",
     },
   });
 
@@ -1127,6 +1130,7 @@ export {
   resolveRunOptions,
   buildAttachTuiArgs,
   buildXdgEnv,
+  buildUvEnv,
   buildPath,
   buildBootstrapPrompt,
   waitForServer,
