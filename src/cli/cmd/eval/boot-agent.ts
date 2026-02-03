@@ -4,11 +4,11 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import OpenAI from "openai";
 import {
   detectPlatform,
-  pythonUrl,
   uvUrl,
   ripgrepUrl,
   opencodeUrl,
   buildXdgEnv,
+  buildUvEnv,
   buildPath,
   waitForServer,
 } from "../../../index";
@@ -409,13 +409,6 @@ function generateEvalOpencodeConfig(model?: string): string {
 async function installEvalEnvironment(prefix: string): Promise<void> {
   const platform = detectPlatform();
 
-  console.log("Installing python...");
-  const py = pythonUrl(platform);
-  await installToolForEval("python", py.url, prefix, [
-    { linkName: "python3", target: py.extractedBinary },
-    { linkName: "python", target: py.extractedBinary },
-  ]);
-
   console.log("Installing uv...");
   const uv = uvUrl(platform);
   await installToolForEval("uv", uv.url, prefix, [
@@ -478,7 +471,7 @@ export async function bootEval(pathToTestFile: string): Promise<BootEvalResult> 
       cwd: workspace,
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, ...xdgEnv, PATH: buildPath(prefix) },
+      env: { ...process.env, ...xdgEnv, ...buildUvEnv(prefix), PATH: buildPath(prefix) },
     });
 
     // Wait for server
