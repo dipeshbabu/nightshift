@@ -1598,7 +1598,7 @@ if (import.meta.main) {
     .strict()
     .scriptName("nightshift")
     .help()
-    .version(false)
+    .version(typeof NIGHTSHIFT_VERSION !== "undefined" ? NIGHTSHIFT_VERSION : "dev")
     .usage("Usage: nightshift <command> [options]")
     .parse();
 }
