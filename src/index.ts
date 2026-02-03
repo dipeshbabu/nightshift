@@ -5,7 +5,6 @@ import { mkdirSync, symlinkSync, existsSync, chmodSync } from "fs";
 import { buildSandboxCommand, type SandboxOptions } from "./sandbox";
 const { runBootstrapPrompt } = await import("./bootstrap-prompt");
 import { bootEval } from "./cli/cmd/eval/boot-agent";
-import { exists } from "fs/promises";
 
 const OPENCODE_VERSION = "v1.1.37"
 const PYTHON_VERSION = "3.13.11";
@@ -1277,6 +1276,11 @@ if (import.meta.main) {
           .option("filePath", {
             type: "string",
             describe: "Path to the eval file",
+          })
+          .option("runs", {
+            type: "number",
+            default: 1,
+            describe: "Number of times to run the evaluation",
           }),
       async (argv) => {
         try {
@@ -1284,27 +1288,36 @@ if (import.meta.main) {
             if (!argv.filePath) {
               throw new Error("filePath is required when evalBoot is true");
             }
-            const result = await bootEval(argv.filePath);
-            // check if eval directory exists
-            const evalDirectory = exists("./eval")
-            if (!evalDirectory) {
-              console.log("Eval directory not found. Creating eval directory...");
-              mkdirSync("./eval");
+
+            // Read eval config to get model info
+            const evalConfig = await Bun.file(argv.filePath).json();
+            const model = evalConfig.model || "unknown/unknown";
+            const [provider, modelName] = model.includes("/")
+              ? model.split("/", 2)
+              : ["unknown", model];
+
+            // Create directory structure: ./eval/{provider}/{model}/
+            const evalDir = join("./eval", provider, modelName);
+            mkdirSync(evalDir, { recursive: true });
+
+            // Run evals
+            const runs = argv.runs || 1;
+            for (let i = 1; i <= runs; i++) {
+              console.log(`Running eval ${i}/${runs}...`);
+              const result = await bootEval(argv.filePath);
+              const randomId = Math.random().toString(36).substring(2, 8);
+              const resultPath = join(evalDir, `boot_eval_result_${i}_${randomId}.json`);
+              await Bun.write(resultPath, JSON.stringify(result, null, 2));
+              console.log(`Saved: ${resultPath}`);
             }
-            const randomIdForRun = Math.random().toString().substring(0, 8);
-            console.log(`Boot eval run ID: ${randomIdForRun}`);
-            const evalResultPath = join("./eval", `boot_eval_result_${randomIdForRun}.json`);
-            await Bun.write(
-              evalResultPath,
-              JSON.stringify(result, null, 2),
-            );
-            console.log(`Boot eval result written to ${evalResultPath}`);
+
+            console.log(`Completed ${runs} eval run(s)`);
             process.exit(0);
           } else {
             console.error("No eval option specified.");
           }
         } catch (err) {
-          console.error("Attach failed:", err);
+          console.error("Eval failed:", err);
           process.exit(1);
         }
       },
