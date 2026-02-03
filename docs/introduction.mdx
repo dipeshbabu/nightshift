@@ -5,18 +5,18 @@ description: CLI for managing Coding Agents
 
 Nightshift is a CLI that installs and runs Coding Agents in isolated, reproducible, and sandboxed environments. It also provides utilities for Agent Routines and Evaluations.
 
-As Coding Agents like OpenCode, Claude Code, and Cursor become more capable, a new generation of agents is emerging with access to host computers—able to perform actions and maintain code on the user's behalf. Nightshift provides a portable, agent-agnostic toolchain that makes it easy to configure environments for these agents while giving them the ability to bootstrap themselves.
+As Coding Agents like OpenCode, Claude Code, and Cursor become more capable, a new generation of agents is emerging with access to host computers and able to perform actions and maintain code on the user's behalf. Nightshift provides a portable, agent-agnostic toolchain that makes it easy to configure environments for these agents while giving them the ability to bootstrap themselves.
 
 Nightshift was designed to support distribution of Coding Agents to non-technical users, giving the agent the environment it needs to do its job, personalization and sustainability through Agent routines, while ensuring safety for the host machine through sandboxing.
 
 ## What you get when you use Nightshift
 
-- **Isolated Toolchain** — installed in a self-contained prefix, separate from your system
-- **Python & UV Workspace** — Pre-configured virtual environments standalone from your system Python
-- **Agent Routines** — Agent-generated `SKILLS.md` and `AGENTS.md` based on a `BOOT.md` file for self-configuration and long horizon maintainance
-- **Sandbox Mode** — Optional read-only host filesystem with writable workspace using `bwrap` on Linux and `sandbox-exec` on macOS
-- **Eval Harness** — Benchmark different LLMs in configuration, administration, and coding tasks
-- **Single Binary CLI** — Cross-platform support for macOS and Linux (x64 and arm64)
+- **Isolated Toolchain**: installed in a self-contained prefix, separate from your system
+- **Python & UV Workspace**: Pre-configured virtual environments standalone from your system Python
+- **Agent Routines**: Agent-generated `SKILLS.md` and `AGENTS.md` based on a `BOOT.md` file for self-configuration and long horizon maintainance
+- **Sandbox Mode**: Optional read-only host filesystem with writable workspace using `bwrap` on Linux and `sandbox-exec` on macOS
+- **Eval Harness**: Benchmark different LLMs in configuration, administration, and coding tasks
+- **Single Binary CLI**: Cross-platform support for macOS and Linux (x64 and arm64)
 
 ## Requirements
 

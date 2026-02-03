@@ -1,42 +1,49 @@
 ---
 title: Quickstart
-description: Get up and running with Nightshift in minutes
+description: Get up and running with Nightshift 
 ---
 
 ## Install the toolchain
 
-After building Nightshift, install the tools to a prefix:
+After building or installing Nightshift, prepare the agent and it's environment with:
 
 ```bash
-./dist/nightshift-<os>-<arch>/bin/nightshift install --prefix ~/.nightshift
+nightshift install --prefix ~/.demo
 ```
 
 This downloads and installs:
-- OpenCode
-- Python 3.13
+- OpenCode (and soon Claude Code, Gemini CLI, and Codex see [Contributing](https://docs.nightshift.sh/contributing) to help us out)
+- Python 3.13 (Stand alone python)
 - uv (Python package manager)
 - ripgrep
+- bwrap (if you're on linux)
 
-## Launch the TUI
+## Launch the Agent
 
-Start Nightshift with the built-in TUI:
 
+### Run Nightshift
 ```bash
-./dist/nightshift-<os>-<arch>/bin/nightshift run --prefix ~/.nightshift --run-nightshift-tui
+nightshift run 
 ```
 
-This starts OpenCode in server mode and attaches the Nightshift TUI.
+This will default to the last ran or installed prefix. To change the prefix you want Nightshift to run you can pass the `--prefix` flag:
 
-## Run OpenCode directly
-
-If you prefer the default OpenCode interface:
-
+### Running Nightshift with Prefix 
 ```bash
-./dist/nightshift-<os>-<arch>/bin/nightshift run --prefix ~/.nightshift
+nightshift run --prefix ~/.demo
 ```
 
-Pass extra arguments to OpenCode with `--`:
+Currently, Nightshift will default to running Opencode as the Agent Harness. We'd like to add support for other Agent harnesses in the future.
+
+You have the option to run the Nightshift TUI which will eventually be a simplified version of the Opencode TUI used for our customers (who are not technical).
+
+The Nightshift TUI is still a work in progress.
+
+
+### Running the Nightshift TUI
 
 ```bash
-./dist/nightshift-<os>-<arch>/bin/nightshift run --prefix ~/.nightshift -- --continue
+nightshift run --run-nightshift-tui
 ```
+
+Nightshift 

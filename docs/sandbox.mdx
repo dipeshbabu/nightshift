@@ -1,0 +1,123 @@
+---
+title: Sandbox
+description: Isolation and Security in Nightshift
+---
+
+Nightshift provides two layers of isolation for running coding agents safely:
+
+1. **Prefix Isolation** - All tools installed in a self-contained directory
+2. **Sandbox Mode** - Optional process-level filesystem protection
+
+## Prefix Installation
+
+When you run `nightshift install --prefix <prefix>`, Nightshift creates a self-contained environment with:
+
+- [OpenCode](https://opencode.ai/) - The coding agent harness
+- [Python](https://github.com/astral-sh/python-build-standalone) - Standalone Python 3.13
+- [uv](https://github.com/astral-sh/uv) - Fast Python package manager
+- [ripgrep](https://github.com/BurntSushi/ripgrep) - Fast code search
+
+Tools are installed following the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
+
+```
+<prefix>/
+├── bin/                # Symlinked binaries
+├── cache/              # XDG_CACHE_HOME - caches for tools
+├── config/             # XDG_CONFIG_HOME - configuration files
+├── share/              # XDG_DATA_HOME - application data
+├── state/              # XDG_STATE_HOME - state/logs
+├── tools/              # Actual downloaded binaries
+├── uv-tools/           # Tools installed via `uv tool`
+└── workspace/          # The uv workspace the agent maintains
+```
+
+### Environment Variables
+
+When running the agent, Nightshift configures the environment:
+
+- `PATH` includes `workspace/.venv/bin`, `uv-tools/bin`, and `prefix/bin`
+- `PYTHONPATH` points to `workspace/src`
+- XDG variables (`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, etc.) point to prefix subdirectories
+- `HOME`, `USER`, `TERM`, and `LANG` are passed through from your shell
+
+## Workspace Structure
+
+The workspace is a uv-managed Python project that the agent maintains:
+
+```
+workspace/
+├── .opencode/              # OpenCode configuration and skills
+│   └── skills/             # Agent-created skill definitions
+│       └── <skill>/
+│           └── SKILL.md
+├── .venv/                  # Python virtual environment (managed by uv)
+├── src/<library>/          # Library code the agent writes
+│   ├── __init__.py
+│   └── utils.py
+├── tests/                  # Test suite
+│   └── test_utils.py
+├── AGENTS.md               # Agent instructions (generated at boot)
+├── opencode.json           # OpenCode permission configuration
+├── pyproject.toml          # Python project metadata
+├── README.md               # Project documentation
+└── uv.lock                 # Dependency lock file
+```
+
+### Bootstrap Process
+
+During installation, Nightshift runs a bootstrap process where the agent:
+1. Reads a user-provided `BOOT.md` file (if present) describing the intended use case
+2. Interviews the user about their requirements
+3. Installs appropriate packages via `uv add`
+4. Generates `AGENTS.md` with project-specific instructions
+5. Creates skills in `.opencode/skills/`
+
+This allows the agent to self-configure based on the user's needs.
+
+## Sandbox Mode
+
+For additional security, enable sandbox mode with the `--sandbox` flag:
+
+```bash
+nightshift run --sandbox
+```
+
+Sandbox mode provides **filesystem write protection** - the host filesystem becomes read-only while the agent can only write to:
+- The workspace directory
+- The prefix directory (for caches and state)
+- Temporary directories (`/tmp`, `/var/tmp`)
+
+### Platform Support
+
+**macOS** uses the built-in `sandbox-exec` with a custom profile:
+- No additional installation required
+- Uses Apple's sandbox technology
+
+**Linux** uses [Bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`):
+- Install with: `apt install bubblewrap` (Debian/Ubuntu) or `dnf install bubblewrap` (Fedora)
+- Creates a containerized environment with bind mounts
+
+**Windows** is not currently supported for sandbox mode.
+
+### What Sandbox Mode Protects
+
+| Access Type | Without Sandbox | With Sandbox |
+|-------------|-----------------|--------------|
+| Read any file | ✅ Allowed | ✅ Allowed |
+| Write to workspace | ✅ Allowed | ✅ Allowed |
+| Write to prefix | ✅ Allowed | ✅ Allowed |
+| Write to `/tmp` | ✅ Allowed | ✅ Allowed |
+| Write elsewhere | ✅ Allowed | ❌ Denied |
+| Network access | ✅ Allowed | ✅ Allowed |
+| Process execution | ✅ Allowed | ✅ Allowed |
+
+### When to Use Sandbox Mode
+
+Enable sandbox mode when:
+- Running agents on sensitive systems
+- Testing untrusted prompts or configurations
+- You want defense-in-depth protection
+
+Sandbox mode is optional because:
+- Some legitimate workflows need broader filesystem access
+- The prefix isolation already provides meaningful separation

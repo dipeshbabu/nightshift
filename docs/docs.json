@@ -32,11 +32,9 @@
         ]
       },
       {
-        "group": "Usage",
+        "group": "Concepts",
         "pages": [
-          "cli",
-          "tui",
-          "configuration"
+          "sandbox"
         ]
       },
       {

@@ -1,4 +1,7 @@
 {
   "name": "nightshift-docs",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "mint": "^4.2.314"
+  }
 }
