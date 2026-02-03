@@ -35,7 +35,13 @@
         "group": "Concepts",
         "pages": [
           "sandbox",
-          "agent-routines"
+          {
+            "group": "Agent Routines",
+            "pages": [
+              "agent-routines",
+              "agent-routines/bootstrap"
+            ]
+          }
         ]
       },
       {

@@ -9,23 +9,29 @@ Contributions are welcome!
 
 1. Fork and clone the repo
 2. Install dependencies:
-   ```bash
-   bun install
-   ```
-3. Make changes and run the CLI locally
-4. Ensure builds still work:
-   ```bash
-   bun run build:single
-   ```
-5. Open a PR with context and screenshots for UI changes
+```bash
+bun install
+```
+3. Make changes, write and run tests
+
+```bash
+bun test
+```
+4. Ensure build work:
+
+```bash
+bun run build:single
+```
+
+5. Open a PR 
 
 ## Getting started
 
-If you are unsure where to start, open an issue with your idea or bug report first.
+If you are unsure where to start, or how to get involved join us in our [discord server].
 
 ## Code style
 
-- Use Bun-native APIs (see `CLAUDE.md`)
+- Use Bun APIs if you can  
 - Follow existing patterns in the codebase
 - Include tests for new functionality
 
@@ -34,5 +40,5 @@ If you are unsure where to start, open an issue with your idea or bug report fir
 When opening a PR:
 
 - Provide clear context about what the change does
-- Include screenshots for any UI changes
-- Link to any related issues
+- PRs need to come from issues that were discussed
+- PRs need to reference the discussed issue
