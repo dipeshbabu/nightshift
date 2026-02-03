@@ -31,9 +31,68 @@ const BIRD_ANSI_COLORS: Record<string, string> = {
 };
 
 const RESET = "\x1b[0m";
+const DIM = "\x1b[2m";
+
+function getCpuName(): string {
+  const cpus = require("os").cpus();
+  if (cpus.length === 0) return "Unknown CPU";
+  // Clean up the model name (remove extra spaces, frequency info that's often redundant)
+  return cpus[0].model.replace(/\s+/g, " ").trim();
+}
+
+function getGpuName(): string | null {
+  try {
+    if (process.platform === "darwin") {
+      const result = Bun.spawnSync(["system_profiler", "SPDisplaysDataType", "-json"]);
+      if (result.exitCode === 0) {
+        const data = JSON.parse(result.stdout.toString());
+        const displays = data?.SPDisplaysDataType;
+        if (displays?.[0]?.sppci_model) {
+          return displays[0].sppci_model;
+        }
+      }
+    } else if (process.platform === "linux") {
+      // Try nvidia-smi first
+      const nvidia = Bun.spawnSync(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]);
+      if (nvidia.exitCode === 0) {
+        const name = nvidia.stdout.toString().trim().split("\n")[0];
+        if (name) return name;
+      }
+      // Fallback to lspci for other GPUs
+      const lspci = Bun.spawnSync(["lspci"]);
+      if (lspci.exitCode === 0) {
+        const lines = lspci.stdout.toString().split("\n");
+        const vga = lines.find(l => l.includes("VGA") || l.includes("3D"));
+        if (vga) {
+          const match = vga.match(/: (.+)$/);
+          if (match) return match[1].trim();
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return null;
+}
 
 function renderBirdBanner(): void {
-  for (const row of BIRD_PIXELS) {
+  const platform = detectPlatform();
+  const title = "Nightshift";
+  const cpu = getCpuName();
+  const gpu = getGpuName();
+
+  const info = [
+    `${platform.os} ${platform.arch}`,
+    cpu,
+    // Only show GPU if it's different from CPU (Apple Silicon has same name for both)
+    ...(gpu && !cpu.includes(gpu) && !gpu.includes("Apple M") ? [gpu] : []),
+  ];
+
+  const titleRow = 3; // position title near middle
+  const infoStartRow = titleRow + 1;
+
+  for (let i = 0; i < BIRD_PIXELS.length; i++) {
+    const row = BIRD_PIXELS[i];
     let line = "";
     let lastColor = "";
     for (const cell of row) {
@@ -53,6 +112,14 @@ function renderBirdBanner(): void {
       }
     }
     if (lastColor) line += RESET;
+
+    // Add title and info to the right of the bird
+    if (i === titleRow) {
+      line += "  " + title;
+    } else if (i >= infoStartRow && i - infoStartRow < info.length) {
+      line += "  " + DIM + info[i - infoStartRow] + RESET;
+    }
+
     console.log(line);
   }
   console.log();
