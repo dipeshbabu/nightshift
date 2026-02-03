@@ -7,6 +7,123 @@ const { runBootstrapPrompt } = await import("./bootstrap-prompt");
 import { bootEval } from "./cli/cmd/eval/boot-agent";
 
 const OPENCODE_VERSION = "v1.1.37"
+
+// ASCII bird for CLI help (matches TUI logo)
+const BIRD_PIXELS = [
+  "..HHHHHHHHH..",
+  ".GLLLHHHLLLG.",
+  "HHLLKLLLKLLHH",
+  "HHLLKLOOKLLHH",
+  "HHLLLOWOLLLHH",
+  "HHLLLLOLLLLHH",
+  "HHHHHHHHHHHHH",
+  ".HHHHHHHHHHH.",
+  "..GGG...GGG..",
+];
+
+const BIRD_ANSI_COLORS: Record<string, string> = {
+  G: "\x1b[38;2;78;128;25m",   // #4E8019
+  H: "\x1b[38;2;108;155;33m",  // #6C9B21
+  L: "\x1b[38;2;247;241;116m", // #F7F174
+  K: "\x1b[38;2;34;34;34m",    // #222222
+  O: "\x1b[38;2;250;158;40m",  // #FA9E28
+  W: "\x1b[38;2;250;203;64m",  // #FACB40
+};
+
+const RESET = "\x1b[0m";
+const DIM = "\x1b[2m";
+
+function getCpuName(): string {
+  const cpus = require("os").cpus();
+  if (cpus.length === 0) return "Unknown CPU";
+  // Clean up the model name (remove extra spaces, frequency info that's often redundant)
+  return cpus[0].model.replace(/\s+/g, " ").trim();
+}
+
+function getGpuName(): string | null {
+  try {
+    if (process.platform === "darwin") {
+      const result = Bun.spawnSync(["system_profiler", "SPDisplaysDataType", "-json"]);
+      if (result.exitCode === 0) {
+        const data = JSON.parse(result.stdout.toString());
+        const displays = data?.SPDisplaysDataType;
+        if (displays?.[0]?.sppci_model) {
+          return displays[0].sppci_model;
+        }
+      }
+    } else if (process.platform === "linux") {
+      // Try nvidia-smi first
+      const nvidia = Bun.spawnSync(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]);
+      if (nvidia.exitCode === 0) {
+        const name = nvidia.stdout.toString().trim().split("\n")[0];
+        if (name) return name;
+      }
+      // Fallback to lspci for other GPUs
+      const lspci = Bun.spawnSync(["lspci"]);
+      if (lspci.exitCode === 0) {
+        const lines = lspci.stdout.toString().split("\n");
+        const vga = lines.find(l => l.includes("VGA") || l.includes("3D"));
+        if (vga) {
+          const match = vga.match(/: (.+)$/);
+          if (match) return match[1].trim();
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return null;
+}
+
+function renderBirdBanner(): void {
+  const platform = detectPlatform();
+  const title = "Nightshift";
+  const cpu = getCpuName();
+  const gpu = getGpuName();
+
+  const info = [
+    `${platform.os} ${platform.arch}`,
+    cpu,
+    // Only show GPU if it's different from CPU (Apple Silicon has same name for both)
+    ...(gpu && !cpu.includes(gpu) && !gpu.includes("Apple M") ? [gpu] : []),
+  ];
+
+  const titleRow = 3; // position title near middle
+  const infoStartRow = titleRow + 1;
+
+  for (let i = 0; i < BIRD_PIXELS.length; i++) {
+    const row = BIRD_PIXELS[i];
+    let line = "";
+    let lastColor = "";
+    for (const cell of row) {
+      if (cell === ".") {
+        if (lastColor) {
+          line += RESET;
+          lastColor = "";
+        }
+        line += " ";
+      } else {
+        const color = BIRD_ANSI_COLORS[cell] || "";
+        if (color !== lastColor) {
+          line += color;
+          lastColor = color;
+        }
+        line += "█";
+      }
+    }
+    if (lastColor) line += RESET;
+
+    // Add title and info to the right of the bird
+    if (i === titleRow) {
+      line += "  " + title;
+    } else if (i >= infoStartRow && i - infoStartRow < info.length) {
+      line += "  " + DIM + info[i - infoStartRow] + RESET;
+    }
+
+    console.log(line);
+  }
+  console.log();
+}
 const UV_VERSION = "0.9.27";
 const RIPGREP_VERSION = "15.1.0";
 
@@ -954,7 +1071,7 @@ async function install(prefix: string): Promise<void> {
   console.log("\nInstallation complete!");
   console.log(`  Prefix: ${prefix}`);
   console.log(`  Workspace: ${workspacePath}`);
-  console.log(`  Run: bun ${__filename} run`);
+  console.log(`  Run: nightshift run`);
 }
 
 
@@ -1136,7 +1253,12 @@ export {
 export type { ToolCompletionPart };
 
 if (import.meta.main) {
-  yargs(process.argv.slice(2))
+  const args = process.argv.slice(2);
+  if (args.includes("--help") || args.includes("-h") || args.length === 0) {
+    renderBirdBanner();
+  }
+
+  yargs(args)
     .command(
       "install",
       "Install opencode + tools into a prefix",
@@ -1305,6 +1427,9 @@ if (import.meta.main) {
     )
     .demandCommand(1, "Please specify a command: install, run, or attach")
     .strict()
+    .scriptName("nightshift")
     .help()
+    .version(false)
+    .usage("Usage: nightshift <command> [options]")
     .parse();
 }
