@@ -1,5 +1,5 @@
 import yargs from "yargs";
-import { resolve, join, relative } from "path";
+import { resolve, join, relative, dirname } from "path";
 import { homedir } from "os";
 import { mkdirSync, symlinkSync, existsSync, chmodSync } from "fs";
 import { buildSandboxCommand, type SandboxOptions } from "./sandbox";
@@ -7,8 +7,10 @@ const { runBootstrapPrompt } = await import("./bootstrap-prompt");
 import { bootEval } from "./cli/cmd/eval/boot-agent";
 
 const OPENCODE_VERSION = "v1.1.37"
+const UV_VERSION = "0.9.27";
+const RIPGREP_VERSION = "15.1.0";
+const WORKSPACE_PACKAGES = ["numpy", "pandas", "matplotlib", "scikit-learn", "jupyter"];
 
-// ASCII bird for CLI help (matches TUI logo)
 const BIRD_PIXELS = [
   "..HHHHHHHHH..",
   ".GLLLHHHLLLG.",
@@ -40,7 +42,6 @@ declare const NIGHTSHIFT_LIBC: string;
 function getCpuName(): string {
   const cpus = require("os").cpus();
   if (cpus.length === 0) return "Unknown CPU";
-  // Clean up the model name (remove extra spaces, frequency info that's often redundant)
   return cpus[0].model.replace(/\s+/g, " ").trim();
 }
 
@@ -89,7 +90,7 @@ function renderBirdBanner(): void {
   const info = [
     `${platform.os} ${platform.arch}`,
     cpu,
-    // Only show GPU if it's different from CPU (Apple Silicon has same name for both)
+    // Only show GPU if it's different from CPU 
     ...(gpu && !cpu.includes(gpu) && !gpu.includes("Apple M") ? [gpu] : []),
   ];
 
@@ -129,10 +130,6 @@ function renderBirdBanner(): void {
   }
   console.log();
 }
-const UV_VERSION = "0.9.27";
-const RIPGREP_VERSION = "15.1.0";
-
-const WORKSPACE_PACKAGES = ["numpy", "pandas", "matplotlib", "scikit-learn", "jupyter"];
 
 interface Platform {
   os: "darwin" | "linux";
@@ -439,7 +436,7 @@ async function upgrade(options: { force?: boolean }): Promise<void> {
   const extractDir = join(cacheDir, "extract");
 
   // Update the currently running binary
-  const binaryDest = process.execPath;
+  const binaryDest = join(home, ".nightshift", "bin", "nightshift")
   console.log(`  Target: ${binaryDest}`);
 
   mkdirSync(cacheDir, { recursive: true });
@@ -472,8 +469,9 @@ async function upgrade(options: { force?: boolean }): Promise<void> {
   }
 
   try {
-    // Install new binary
+    // Ensure destination directory exists and install new binary
     const { copyFileSync } = await import("fs");
+    mkdirSync(dirname(binaryDest), { recursive: true });
     copyFileSync(extractedBinary, binaryDest);
     chmodSync(binaryDest, 0o755);
     console.log(`  Installed to ${binaryDest}`);
