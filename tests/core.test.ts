@@ -1,12 +1,9 @@
 import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
-import {
-  buildBootstrapPrompt,
-  buildPath,
-  waitForServer,
-  buildXdgEnv,
-} from "./index";
+import { buildBootstrapPrompt } from "../src/lib/bootstrap";
+import { buildPath, buildXdgEnv } from "../src/lib/env";
+import { waitForServer } from "../src/lib/server";
 
 describe("buildBootstrapPrompt", () => {
   test("includes user intent in prompt", () => {

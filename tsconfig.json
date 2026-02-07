@@ -16,8 +16,8 @@
     "customConditions": ["browser"],
     "baseUrl": ".",
     "paths": {
-      "@tui/*": ["./src/cli/cmd/tui/tui/*"],
-      "@/*": ["./src/cli/cmd/tui/lib/*"]
+      "@tui/*": ["./src/tui/tui/*"],
+      "@/*": ["./src/tui/lib/*"]
     }
   },
   "include": ["src"]

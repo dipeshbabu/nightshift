@@ -12,11 +12,13 @@ import {
   SelectRenderableEvents,
 } from "@opentui/core";
 import { SpinnerRenderable } from "opentui-spinner";
-import { createFrames, createColors } from "./cli/cmd/tui/tui/ui/spinner";
+import { createFrames, createColors } from "./tui/tui/ui/spinner";
 import stripAnsi from "strip-ansi";
 import { join } from "path";
 import open from "open";
 import type { OpencodeClient, QuestionRequest, QuestionAnswer } from "@opencode-ai/sdk/v2";
+import { buildPath } from "./lib/env";
+import { waitForServer } from "./lib/server";
 
 // Colors for the bootstrap UI
 const COLORS = {
@@ -169,28 +171,6 @@ const DIFF_COLORS = {
   removedSignColor: RGBA.fromHex("#e06c75"),
   fg: RGBA.fromHex("#e6edf3"),
 } as const;
-
-function buildPath(prefix: string): string {
-  const { existsSync } = require("fs");
-  const binDir = join(prefix, "bin");
-  const uvToolsBin = join(prefix, "uv-tools", "bin");
-  let pathParts = [binDir];
-  if (existsSync(uvToolsBin)) pathParts.unshift(uvToolsBin);
-  return `${pathParts.join(":")}:${process.env.PATH ?? ""}`;
-}
-
-async function waitForServer(url: string, maxAttempts = 30): Promise<void> {
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const response = await fetch(`${url}/global/health`);
-      if (response.ok) return;
-    } catch {
-      // Server not ready yet
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error("Server failed to start within timeout");
-}
 
 // Provider info for the selection dialog
 interface ProviderOption {
@@ -431,7 +411,7 @@ export async function runBootstrapPrompt(
       fg: COLORS.primary,
     });
 
-    // Create SelectRenderable for auth methods 
+    // Create SelectRenderable for auth methods
     authMethodSelect = new SelectRenderable(renderer, {
       id: "auth-method-select",
       options: [],

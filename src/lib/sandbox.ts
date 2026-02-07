@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 
 export interface SandboxOptions {
   workspacePath: string;      // Writable directory
@@ -54,8 +55,7 @@ function buildSandboxExecCommand(command: string[], opts: SandboxOptions): strin
   const profile = generateMacOSProfile(opts);
   const profilePath = join(opts.prefixPath, "sandbox.sb");
 
-  // Write profile synchronously
-  Bun.write(profilePath, profile);
+  writeFileSync(profilePath, profile);
 
   return [
     "sandbox-exec",
@@ -81,6 +81,7 @@ function generateMacOSProfile(opts: SandboxOptions): string {
 (allow file-write* (subpath "/tmp"))
 (allow file-write* (subpath "/private/tmp"))
 (allow file-write* (subpath "/var/tmp"))
+(allow file-write* (literal "/dev/null"))
 (allow file-write* (subpath "/var/folders"))
 
 ; Allow all reads

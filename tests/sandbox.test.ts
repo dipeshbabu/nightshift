@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { buildSandboxCommand, type SandboxOptions } from "../src/sandbox";
+import { mkdirSync, rmSync } from "fs";
+import { buildSandboxCommand, type SandboxOptions } from "../src/lib/sandbox";
 
 const mockOptions: SandboxOptions = {
   workspacePath: "/home/user/workspace",
@@ -86,8 +87,16 @@ test("buildSandboxCommand returns sandbox-exec command on Darwin", () => {
   const originalPlatform = process.platform;
   Object.defineProperty(process, "platform", { value: "darwin", writable: true });
 
+  const tmpPrefix = `/tmp/sandbox-test-${Date.now()}`;
+  mkdirSync(tmpPrefix, { recursive: true });
+
   try {
-    const command = buildSandboxCommand(["opencode", "--help"], mockOptions);
+    const darwinOptions: SandboxOptions = {
+      ...mockOptions,
+      prefixPath: tmpPrefix,
+      binDir: `${tmpPrefix}/bin`,
+    };
+    const command = buildSandboxCommand(["opencode", "--help"], darwinOptions);
     expect(command[0]).toBe("sandbox-exec");
     expect(command[1]).toBe("-f");
     expect(command[2]).toContain("sandbox.sb");
@@ -95,6 +104,7 @@ test("buildSandboxCommand returns sandbox-exec command on Darwin", () => {
     expect(command).toContain("--help");
   } finally {
     Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+    rmSync(tmpPrefix, { recursive: true, force: true });
   }
 });
 
