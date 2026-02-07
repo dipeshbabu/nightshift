@@ -7,24 +7,6 @@ import { run, resolveRunOptions, buildAttachTuiArgs } from "./cli/handlers/run";
 import { runEval } from "./cli/handlers/eval";
 import { upgrade } from "./cli/handlers/upgrade";
 
-// Re-export everything from lib modules for backward compatibility
-export { detectPlatform, getCpuName, getGpuName, checkSandboxAvailability } from "./lib/platform";
-export { configSearchPaths, expandHome, resolvePrefixFromConfig, readFullConfig, saveActivePrefix } from "./lib/config";
-export { download, extract } from "./lib/download";
-export { buildXdgEnv, buildUvEnv, buildPath } from "./lib/env";
-export { waitForServer } from "./lib/server";
-export { opencodeUrl, uvUrl, ripgrepUrl, installTool, installUvTools } from "./lib/tools";
-export {
-  generateRootPyproject, generateUtilsPy, generateTestUtilsPy,
-  generateReadme, generateAgentsMd, generateOpencodeConfig,
-  createWorkspaceScaffold, syncWorkspace,
-} from "./lib/workspace";
-export { buildBootstrapPrompt, handleToolCompletion, bootstrapWithOpencode } from "./lib/bootstrap";
-export { fetchLatestRelease, parseVersion, isNewerVersion, getAssetNameForPlatform, upgrade } from "./lib/upgrade";
-export { WORKSPACE_PACKAGES } from "./lib/constants";
-export { extractExtraArgs, resolveRunOptions, buildAttachTuiArgs } from "./cli/handlers/run";
-export type { ToolCompletionPart } from "./lib/types";
-
 if (import.meta.main) {
   const args = process.argv.slice(2);
   if (args.includes("--help") || args.includes("-h") || args.length === 0) {

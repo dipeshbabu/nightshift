@@ -2,29 +2,22 @@ import { test, expect } from "bun:test";
 import { homedir, tmpdir } from "os";
 import { join } from "path";
 import { mkdtemp, rm } from "fs/promises";
+import { configSearchPaths, expandHome, readFullConfig, saveActivePrefix } from "../src/lib/config";
+import { detectPlatform, checkSandboxAvailability } from "../src/lib/platform";
+import { opencodeUrl } from "../src/lib/tools";
+import { extractExtraArgs, resolveRunOptions, buildAttachTuiArgs } from "../src/cli/handlers/run";
+import { buildXdgEnv, buildUvEnv } from "../src/lib/env";
 import {
-  configSearchPaths,
-  expandHome,
-  detectPlatform,
-  opencodeUrl,
-  extractExtraArgs,
-  resolveRunOptions,
-  buildAttachTuiArgs,
-  buildXdgEnv,
-  buildUvEnv,
-  readFullConfig,
-  saveActivePrefix,
   generateRootPyproject,
   generateUtilsPy,
   generateTestUtilsPy,
   generateReadme,
   generateAgentsMd,
   generateOpencodeConfig,
-  checkSandboxAvailability,
-  handleToolCompletion,
-  WORKSPACE_PACKAGES,
-  type ToolCompletionPart,
-} from "../src/index";
+} from "../src/lib/workspace";
+import { handleToolCompletion } from "../src/lib/bootstrap";
+import { WORKSPACE_PACKAGES } from "../src/lib/constants";
+import type { ToolCompletionPart } from "../src/lib/types";
 import type { BootstrapUI } from "../src/bootstrap-prompt";
 
 test("expandHome leaves non-tilde paths unchanged", () => {
