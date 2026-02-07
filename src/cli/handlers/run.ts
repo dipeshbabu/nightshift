@@ -10,14 +10,22 @@ export function extractExtraArgs(argv: string[]): string[] {
   return dashIdx >= 0 ? argv.slice(dashIdx + 1) : [];
 }
 
+interface RunOptions {
+  extra: string[]
+  useNightshiftTui: boolean
+  sandboxEnabled: boolean
+  skipAgentBoot: boolean
+}
+
 export function resolveRunOptions(
   argv: { [key: string]: unknown },
   processArgv: string[],
-): { extra: string[]; useNightshiftTui: boolean; sandboxEnabled: boolean } {
+): RunOptions {
   return {
     extra: extractExtraArgs(processArgv),
     useNightshiftTui: Boolean(argv["run-nightshift-tui"]),
     sandboxEnabled: Boolean(argv["sandbox"]),
+    skipAgentBoot: Boolean(argv["skip-ai-boot"])
   };
 }
 

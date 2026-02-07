@@ -7,6 +7,10 @@ import { run, resolveRunOptions, buildAttachTuiArgs } from "./cli/handlers/run";
 import { runEval } from "./cli/handlers/eval";
 import { upgrade } from "./cli/handlers/upgrade";
 
+function installCompleteMessage() {
+  console.log("Instalation complete")
+}
+
 if (import.meta.main) {
   const args = process.argv.slice(2);
   if (args.includes("--help") || args.includes("-h") || args.length === 0) {
@@ -23,14 +27,29 @@ if (import.meta.main) {
           demandOption: true,
           describe: "Directory to install tools into",
         })
+          .option("skip-ai-boot", {
+            type: "boolean",
+            default: false,
+            describe: "Skip the Boot Agent routine"
+
+          })
       ,
       async (argv) => {
         try {
+          const { skipAgentBoot } = resolveRunOptions(argv, process.argv);
           // install routine
           // install tools to prefix
           await installTools(argv.prefix);
           // create workspace in prefix
           await createWorkspace(argv.prefix);
+          // if we're skipping the Boot Agent Routine, it's safe to return
+          if (skipAgentBoot) {
+            console.log("Skipping Boot Agent Sequence");
+            installCompleteMessage()
+            process.exit(0);
+          }
+          // we're not skipping agent routine, start the Boot Agent Routine
+
         } catch (err) {
           console.error("Install failed:", err);
           process.exit(1);
