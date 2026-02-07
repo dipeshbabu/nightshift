@@ -2,7 +2,7 @@ import yargs from "yargs";
 import { renderBirdBanner } from "./lib/banner";
 import { getNightshiftVersion } from "./lib/constants";
 import { resolvePrefixFromConfig, saveActivePrefix } from "./lib/config";
-import { install } from "./cli/handlers/install";
+import { createWorkspace, installTools } from "./cli/handlers/install";
 import { run, resolveRunOptions, buildAttachTuiArgs } from "./cli/handlers/run";
 import { runEval } from "./cli/handlers/eval";
 import { upgrade } from "./cli/handlers/upgrade";
@@ -22,10 +22,15 @@ if (import.meta.main) {
           type: "string",
           demandOption: true,
           describe: "Directory to install tools into",
-        }),
+        })
+      ,
       async (argv) => {
         try {
-          await install(argv.prefix);
+          // install routine
+          // install tools to prefix
+          await installTools(argv.prefix);
+          // create workspace in prefix
+          await createWorkspace(argv.prefix);
         } catch (err) {
           console.error("Install failed:", err);
           process.exit(1);
