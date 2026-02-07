@@ -4,19 +4,14 @@ import type { createCliRenderer, TextRenderable } from "@opentui/core";
 // Re-export question types for external use
 export type { QuestionRequest, QuestionAnswer } from "@opencode-ai/sdk/v2";
 
-export interface FileDiff {
-  file: string;
-  before: string;
-  after: string;
-  additions: number;
-  deletions: number;
-}
+// Re-export FileDiff from shared lib
+export type { FileDiff } from "../../lib/diff";
 
 export interface BootstrapUI {
   appendText: (text: string) => void;
   appendToolStatus: (status: "running" | "completed" | "error", text: string) => void;
   setStatus: (status: string) => void;
-  showDiff: (diffs: FileDiff[]) => void;
+  showDiff: (diffs: import("../../lib/diff").FileDiff[]) => void;
   showBashOutput: (command: string, output: string, description?: string) => void;
   showWriteOutput: (filePath: string, content: string) => void;
   showEditOutput: (filePath: string, diff: string) => void;

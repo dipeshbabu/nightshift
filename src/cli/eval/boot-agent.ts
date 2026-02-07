@@ -4,19 +4,19 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import { buildXdgEnv, buildUvEnv, buildPath } from "../../lib/env";
 import { waitForServer } from "../../lib/server";
 import { bootPrompt } from "../../lib/prompts/boot/boot";
-import type { BootEvalStruct } from "./types";
-import { ensureApiKey } from "./auth";
-import { gradeFile } from "./grader";
+import type { BootEvalStruct } from "../../lib/eval/types";
+import { ensureApiKey } from "../../lib/eval/auth";
+import { gradeFile } from "../../lib/eval/grader";
 import {
   installEvalEnvironment,
   generateEvalOpencodeConfig,
-} from "./environment";
+} from "../../lib/eval/environment";
 
-export type { FileResult, BootEvalResult } from "./types";
+export type { FileResult, BootEvalResult } from "../../lib/eval/types";
 
 export async function bootEval(
   pathToTestFile: string,
-): Promise<import("./types").BootEvalResult> {
+): Promise<import("../../lib/eval/types").BootEvalResult> {
   debugger;
   // Read test struct and BOOT.md content
   const testStruct = (await Bun.file(pathToTestFile).json()) as BootEvalStruct;
@@ -189,7 +189,7 @@ export async function bootEval(
     abort.abort();
 
     // Collect output files
-    const files: import("./types").FileResult[] = [];
+    const files: import("../../lib/eval/types").FileResult[] = [];
 
     for (const skillPath of testStruct.output.skillsPaths) {
       const fullPath = join(workspace, skillPath);

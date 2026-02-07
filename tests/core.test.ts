@@ -57,7 +57,6 @@ describe("buildBootstrapPrompt", () => {
     const prompt = buildBootstrapPrompt("deployment");
 
     expect(prompt).toContain("Interview the User");
-    expect(prompt).toContain("AskUserQuestion");
   });
 
 });

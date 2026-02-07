@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { FileResult } from "./types";
-import { skillGraderPrompt } from "../../lib/prompts/eval/skill-grader";
-import { agentsMdGraderPrompt } from "../../lib/prompts/eval/agents-md-grader";
+import { skillGraderPrompt } from "../prompts/eval/skill-grader";
+import { agentsMdGraderPrompt } from "../prompts/eval/agents-md-grader";
 
 export async function gradeFile(
   fileResult: FileResult,

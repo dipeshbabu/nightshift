@@ -129,3 +129,17 @@ export const LANGUAGE_EXTENSIONS: Record<string, string> = {
   ".txt": "plaintext",
   ".log": "plaintext",
 }
+
+/**
+ * Get the language identifier for a filename based on its extension.
+ * Uses the LANGUAGE_EXTENSIONS map for comprehensive coverage.
+ */
+export function getFiletype(filename: string): string | undefined {
+  const dot = filename.lastIndexOf(".");
+  if (dot === -1) {
+    // Handle extensionless files like "Dockerfile"
+    return LANGUAGE_EXTENSIONS[filename.split("/").pop() ?? ""];
+  }
+  const ext = filename.slice(dot).toLowerCase();
+  return LANGUAGE_EXTENSIONS[ext];
+}

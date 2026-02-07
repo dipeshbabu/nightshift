@@ -1,5 +1,4 @@
 import { SyntaxStyle, RGBA } from "@opentui/core";
-import type { ProviderOption } from "./types";
 
 export const COLORS = {
   primary: "#fab283",
@@ -52,8 +51,3 @@ export const DIFF_COLORS = {
   removedSignColor: RGBA.fromHex("#e06c75"),
   fg: RGBA.fromHex("#e6edf3"),
 } as const;
-
-export const PROVIDER_OPTIONS: ProviderOption[] = [
-  { id: "anthropic", name: "Anthropic", description: "(Claude Max or API key)" },
-  { id: "openai", name: "OpenAI", description: "(ChatGPT Plus/Pro or API key)" },
-];

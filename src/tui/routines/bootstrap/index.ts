@@ -1,8 +1,8 @@
 import { createCliRenderer } from "@opentui/core";
 import { join } from "path";
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
-import { buildPath } from "../lib/env";
-import { waitForServer } from "../lib/server";
+import { buildPath } from "../../../lib/env";
+import { waitForServer } from "../../../lib/server";
 import type { BootstrapUI, BootstrapPromptOptions, BootstrapPromptResult, BootstrapState } from "./types";
 import { createAllViews } from "./views";
 import { createBootstrapUI } from "./ui";
@@ -10,7 +10,8 @@ import { createAuthHandlers } from "./auth";
 import { setupEventHandlers } from "./events";
 
 // Re-export public types
-export type { FileDiff, BootstrapUI, BootstrapPromptOptions, BootstrapPromptResult } from "./types";
+export type { FileDiff } from "../../lib/diff";
+export type { BootstrapUI, BootstrapPromptOptions, BootstrapPromptResult } from "./types";
 export type { QuestionRequest, QuestionAnswer } from "./types";
 
 /**

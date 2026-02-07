@@ -6,70 +6,15 @@ import {
 } from "@opentui/core";
 import { SpinnerRenderable } from "opentui-spinner";
 import stripAnsi from "strip-ansi";
-import { COLORS, syntaxStyle, TOOL_STATUS_CONFIG, DIFF_COLORS } from "./constants";
-import { toUnifiedDiff, getFiletype } from "./helpers";
-import type { BootstrapUI, BootstrapState, QuestionAnswer } from "./types";
+import { COLORS, syntaxStyle, TOOL_STATUS_CONFIG, DIFF_COLORS } from "../../lib/theme";
+import { createOutputBlock, addExpandableContent } from "../../lib/output";
+import { toUnifiedDiff } from "../../lib/diff";
+import { getFiletype } from "../../lib/language";
+import type { BootstrapUI, BootstrapState, QuestionAnswer, ViewState } from "./types";
+import type { FileDiff } from "../../lib/diff";
 import type { Views } from "./views";
 
 type Renderer = ConstructorParameters<typeof BoxRenderable>[0];
-
-// Create a styled output block box with left border
-const createOutputBlock = (renderer: Renderer, blockId: string): BoxRenderable => {
-  return new BoxRenderable(renderer, {
-    id: blockId,
-    flexDirection: "column",
-    border: ["left"],
-    paddingTop: 1,
-    paddingBottom: 1,
-    paddingLeft: 2,
-    marginTop: 1,
-    gap: 1,
-    backgroundColor: COLORS.backgroundPanel,
-    borderColor: COLORS.background,
-  });
-};
-
-// Add expandable text content to a block with "click to expand" functionality
-const addExpandableContent = (
-  renderer: Renderer,
-  blockBox: BoxRenderable,
-  blockId: string,
-  content: string,
-  lines: string[],
-) => {
-  const truncated = lines.length > 10;
-  let expanded = false;
-
-  const contentText = new TextRenderable(renderer, {
-    id: `${blockId}-content`,
-    content: truncated ? lines.slice(0, 10).join("\n") : content,
-    fg: COLORS.text,
-    wrapMode: "word",
-  });
-  blockBox.add(contentText);
-
-  if (truncated) {
-    const moreText = new TextRenderable(renderer, {
-      id: `${blockId}-more`,
-      content: `... (${lines.length - 10} more lines) - click to expand`,
-      fg: COLORS.textMuted,
-      onMouseUp: () => {
-        expanded = !expanded;
-        contentText.content = expanded ? content : lines.slice(0, 10).join("\n");
-        moreText.content = expanded
-          ? "click to collapse"
-          : `... (${lines.length - 10} more lines) - click to expand`;
-      },
-      onMouseOver: function() {
-        this.fg = COLORS.primary;
-      },
-      onMouseOut: function() {
-        this.fg = COLORS.textMuted;
-      },
-    });
-    blockBox.add(moreText);
-  }
-};
 
 export function createBootstrapUI(
   renderer: Renderer,
@@ -113,7 +58,7 @@ export function createBootstrapUI(
     setStatus: (status: string) => {
       statusText.content = status;
     },
-    showDiff: (diffs) => {
+    showDiff: (diffs: FileDiff[]) => {
       resetTextTracking();
 
       for (const diff of diffs) {

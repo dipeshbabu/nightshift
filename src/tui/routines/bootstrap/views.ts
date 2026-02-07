@@ -6,8 +6,9 @@ import {
   SelectRenderable,
 } from "@opentui/core";
 import { SpinnerRenderable } from "opentui-spinner";
-import { createFrames, createColors } from "../tui/tui/ui/spinner";
-import { COLORS, SELECT_STYLE, INPUT_STYLE, PROVIDER_OPTIONS } from "./constants";
+import { createFrames, createColors } from "../../tui/ui/spinner";
+import { COLORS, SELECT_STYLE, INPUT_STYLE } from "../../lib/theme";
+import { PROVIDER_OPTIONS } from "./constants";
 import type { ViewState } from "./types";
 
 type Renderer = ConstructorParameters<typeof BoxRenderable>[0];

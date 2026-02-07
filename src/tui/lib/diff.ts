@@ -1,4 +1,10 @@
-import type { FileDiff } from "./types";
+export interface FileDiff {
+  file: string;
+  before: string;
+  after: string;
+  additions: number;
+  deletions: number;
+}
 
 /**
  * Convert FileDiff to unified diff format
@@ -25,24 +31,4 @@ export function toUnifiedDiff(diff: FileDiff): string {
   }
 
   return result;
-}
-
-/**
- * Get file extension for syntax highlighting
- */
-export function getFiletype(filename: string): string | undefined {
-  const ext = filename.split(".").pop()?.toLowerCase();
-  const mapping: Record<string, string> = {
-    py: "python",
-    js: "javascript",
-    ts: "typescript",
-    tsx: "tsx",
-    jsx: "jsx",
-    md: "markdown",
-    json: "json",
-    toml: "toml",
-    yaml: "yaml",
-    yml: "yaml",
-  };
-  return ext ? mapping[ext] : undefined;
 }

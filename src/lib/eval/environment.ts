@@ -7,8 +7,8 @@ import {
   symlinkSync,
 } from "fs";
 import type { BinaryMapping } from "./types";
-import { detectPlatform } from "../../lib/platform";
-import { uvUrl, ripgrepUrl, opencodeUrl } from "../../lib/tools";
+import { detectPlatform } from "../platform";
+import { uvUrl, ripgrepUrl, opencodeUrl } from "../tools";
 
 async function installToolForEval(
   name: string,
