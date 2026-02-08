@@ -90,6 +90,11 @@ function generateMacOSProfile(opts: SandboxOptions): string {
 ; Allow network
 (allow network*)
 
+; Allow Security framework writes (needed for TLS/HTTPS)
+(allow file-write* (subpath "/Library/Keychains"))
+(allow file-write* (subpath "${opts.env.HOME || process.env.HOME || "/var/empty"}/Library"))
+(allow file-write* (regex #"^/private/var/folders/.*/com\\.apple\\."))
+
 ; Allow process operations
 (allow process*)
 `;

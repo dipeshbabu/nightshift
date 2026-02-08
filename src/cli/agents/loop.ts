@@ -1,6 +1,6 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2";
-import { execute } from "./executor";
-import { validate } from "./validator";
+import { execute } from "./worker";
+import { validate } from "./boss";
 
 export interface AgentLoopOptions {
   executorClient: ReturnType<typeof createOpencodeClient>;
@@ -33,7 +33,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     onText,
   } = options;
 
-  let previousAgentOutput: string | undefined;
   let previousEvalOutput: string | undefined;
   let iterations = 0;
   let finalOutput = "";
@@ -41,23 +40,21 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   for (let i = 0; i < maxIterations; i++) {
     iterations = i + 1;
 
-    // Executor phase
+    // Executor phase (worker)
     const execResult = await execute({
       client: executorClient,
       workspace,
       basePrompt: prompt,
       model: agentModel,
       logDir,
-      previousAgentOutput,
       previousEvalOutput,
       onText: onText ? (text) => onText("executor", text) : undefined,
     });
 
-    // Validator phase
+    // Validator phase (boss) 
     const valResult = await validate({
       client: validatorClient,
       basePrompt: prompt,
-      agentOutput: execResult.output,
       model: evalModel,
       commitHash: execResult.commitHash,
       logDir,
@@ -65,13 +62,12 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     });
 
     if (valResult.done) {
-      console.log("[ralph] Evaluator says DONE. Exiting.");
+      console.log("[ralph] Boss says DONE. Exiting.");
       finalOutput = execResult.output;
       return { iterations, finalOutput, done: true };
     }
 
     console.log("[ralph] Not done yet. Looping...");
-    previousAgentOutput = execResult.output;
     previousEvalOutput = valResult.output;
     finalOutput = execResult.output;
   }

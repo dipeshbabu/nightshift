@@ -82,19 +82,38 @@ export async function runSession(options: SessionOptions): Promise<SessionResult
                 const toolTitle = (part.state as any).title || part.tool;
 
                 if (currentState === "running") {
-                  append(`\n▶ ${toolTitle}\n`);
+                  const state = part.state as any;
+                  let msg = `\n▶ ${toolTitle}`;
+                  if (state.input) {
+                    msg += ` ${JSON.stringify(state.input)}`;
+                  }
+                  msg += "\n";
+                  append(msg);
                   onToolStatus?.(part.tool, "running", toolTitle);
                 } else if (currentState === "completed") {
                   const state = part.state as any;
-                  let msg = `✓ ${toolTitle}\n`;
+                  let msg = `✓ ${toolTitle}`;
+                  if (state.time?.start && state.time?.end) {
+                    msg += ` (${((state.time.end - state.time.start) / 1000).toFixed(1)}s)`;
+                  }
+                  msg += "\n";
                   if (state.output?.trim()) {
                     msg += state.output.trim() + "\n";
                   }
                   append(msg);
                   onToolStatus?.(part.tool, "completed", toolTitle);
                 } else if (currentState === "error") {
-                  const error = (part.state as any).error || "Unknown error";
-                  append(`✗ ${toolTitle}: ${error}\n`);
+                  const state = part.state as any;
+                  const error = state.error || "Unknown error";
+                  let msg = `✗ ${toolTitle}: ${error}`;
+                  if (state.input) {
+                    msg += `\n  input: ${JSON.stringify(state.input)}`;
+                  }
+                  if (state.time?.start && state.time?.end) {
+                    msg += `\n  duration: ${((state.time.end - state.time.start) / 1000).toFixed(1)}s`;
+                  }
+                  msg += "\n";
+                  append(msg);
                   onToolStatus?.(part.tool, "error", error);
                 }
               }

@@ -211,7 +211,7 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, workspac
 
 async function runWithRalph(prefix: string, workspacePath: string, options: RalphOptions): Promise<void> {
   const { agentModel, evalModel, useNightshiftTui } = options;
-  const logDir = join(workspacePath, "agent_logs");
+  const logDir = join(prefix, "agent_logs");
   mkdirSync(logDir, { recursive: true });
 
   console.log(`[ralph] Workspace: ${workspacePath}`);
