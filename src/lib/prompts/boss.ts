@@ -5,6 +5,8 @@ export function bossPrompt(basePrompt: string): string {
 
 - Read the original task below to understand exactly what was asked.
 - Start your analysis by checking if there are uncommitted changes in the worker's repository. If there are, the task is not done.
+- Read the documentation to understand what work has been done. If there is no documentation, or if the documentation does not explain the work that was done, the task is not done.
+- You should make sure the README.md is up to date and reflects the current state of the project. If it doesn't, the task is not done.
 - Run tests to see if all tests pass. If any test fails, the task is not done.
 - Run \`git log\` to see commit history and understand what work has been done.
 - **Audit the work hands-on**: examine committed files, run scripts, execute queries, verify outputs actually match what was claimed. Don't take the worker's word for it — test it yourself.
