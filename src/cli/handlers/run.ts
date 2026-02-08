@@ -1,9 +1,11 @@
 import { resolve, join } from "path";
-import { existsSync } from "fs";
+import { mkdirSync, existsSync } from "fs";
 import { checkSandboxAvailability } from "../../lib/platform";
 import { readFullConfig, expandHome } from "../../lib/config";
 import { buildXdgEnv, buildUvEnv } from "../../lib/env";
 import { buildSandboxCommand, type SandboxOptions } from "../../lib/sandbox";
+import { startAgentServer } from "../agents/server";
+import { runAgentLoop } from "../agents/loop";
 
 export function extractExtraArgs(argv: string[]): string[] {
   const dashIdx = argv.indexOf("--");
@@ -15,6 +17,10 @@ interface RunOptions {
   useNightshiftTui: boolean
   sandboxEnabled: boolean
   skipAgentBoot: boolean
+  ralphEnabled: boolean
+  ralphPrompt?: string
+  ralphAgentModel: string
+  ralphEvalModel: string
 }
 
 export function resolveRunOptions(
@@ -25,7 +31,11 @@ export function resolveRunOptions(
     extra: extractExtraArgs(processArgv),
     useNightshiftTui: Boolean(argv["run-nightshift-tui"]),
     sandboxEnabled: Boolean(argv["sandbox"]),
-    skipAgentBoot: Boolean(argv["skip-ai-boot"])
+    skipAgentBoot: Boolean(argv["skip-ai-boot"]),
+    ralphEnabled: Boolean(argv["ralph"]),
+    ralphPrompt: argv["prompt"] as string | undefined,
+    ralphAgentModel: (argv["agent-model"] as string) || "openai/gpt-5.2-codex",
+    ralphEvalModel: (argv["eval-model"] as string) || "openai/gpt-5.2-codex",
   };
 }
 
@@ -41,7 +51,15 @@ export function buildAttachTuiArgs(url: string, session: string | undefined, dir
   };
 }
 
-export async function run(prefix: string, args: string[], useNightshiftTui: boolean, sandboxEnabled: boolean): Promise<void> {
+export interface RalphOptions {
+  enabled: boolean;
+  prompt?: string;
+  agentModel: string;
+  evalModel: string;
+  useNightshiftTui: boolean;
+}
+
+export async function run(prefix: string, args: string[], useNightshiftTui: boolean, sandboxEnabled: boolean, ralphOptions?: RalphOptions): Promise<void> {
   prefix = resolve(prefix);
   const binDir = join(prefix, "bin");
   const uvToolsBin = join(prefix, "uv-tools", "bin");
@@ -92,6 +110,11 @@ export async function run(prefix: string, args: string[], useNightshiftTui: bool
       OPENCODE_EXPERIMENTAL_LSP_TY: "true",
     },
   };
+
+  if (ralphOptions?.enabled) {
+    await runWithRalph(prefix, workspacePath, ralphOptions);
+    return;
+  }
 
   if (useNightshiftTui) {
     // Start opencode as a server and attach nightshift TUI
@@ -183,5 +206,81 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, workspac
   } finally {
     // Clean up server when TUI exits
     serverProc.kill();
+  }
+}
+
+async function runWithRalph(prefix: string, workspacePath: string, options: RalphOptions): Promise<void> {
+  const { agentModel, evalModel, useNightshiftTui } = options;
+  const logDir = join(workspacePath, "agent_logs");
+  mkdirSync(logDir, { recursive: true });
+
+  console.log(`[ralph] Workspace: ${workspacePath}`);
+  console.log("[ralph] Starting sandboxed opencode server...");
+
+  const handle = await startAgentServer({
+    prefix,
+    workspace: workspacePath,
+  });
+
+  // Auth is handled by the opencode server via auth.json in XDG_DATA_HOME
+
+  let prompt: string;
+
+  if (useNightshiftTui) {
+    // Start TUI and wait for prompt from user
+    const { tui } = await import("../../tui/tui/app");
+    const promptPromise = new Promise<string>((resolve) => {
+      // The TUI will call this when the user submits a prompt in ralph mode
+      (globalThis as any).__ralphPromptResolve = resolve;
+    });
+
+    // Launch TUI in the background — it renders to the terminal
+    const tuiPromise = tui({ url: handle.serverUrl, args: { ralph: true }, directory: workspacePath });
+
+    console.log("[ralph] Waiting for prompt from TUI...");
+    prompt = await promptPromise;
+
+    // Run the loop (TUI stays active showing sessions)
+    try {
+      await runAgentLoop({
+        client: handle.client,
+        workspace: workspacePath,
+        prompt,
+        agentModel,
+        evalModel,
+        logDir,
+      });
+    } finally {
+      handle.kill();
+    }
+
+    // Wait for TUI to exit
+    await tuiPromise;
+  } else {
+    // Headless mode: read prompt from file
+    if (!options.prompt) {
+      throw new Error("[ralph] --prompt <file> is required when not using TUI");
+    }
+
+    const promptFile = Bun.file(options.prompt);
+    if (!(await promptFile.exists())) {
+      throw new Error(`[ralph] Prompt file not found: ${options.prompt}`);
+    }
+    prompt = await promptFile.text();
+
+    try {
+      await runAgentLoop({
+        client: handle.client,
+        workspace: workspacePath,
+        prompt,
+        agentModel,
+        evalModel,
+        logDir,
+      });
+    } finally {
+      handle.kill();
+    }
+
+    process.exit(0);
   }
 }

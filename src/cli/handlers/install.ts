@@ -25,6 +25,22 @@ export async function createWorkspace(prefix: string): Promise<void> {
     await createWorkspaceScaffold(workspacePath, libraryName, packages, { skipAgentsMd: true });
     // syncing the workspace this is what downloads the python dependencies and sets up the venv. leverages uv
     await syncWorkspace(prefix, workspacePath);
+
+    // Init git repo with an initial commit so rev-parse HEAD works
+    await Bun.spawn(["git", "init"], { cwd: workspacePath, stdout: "pipe", stderr: "pipe" }).exited;
+    await Bun.spawn(["git", "commit", "--allow-empty", "-m", "initial"], { cwd: workspacePath, stdout: "pipe", stderr: "pipe" }).exited;
+
+    // Write opencode.json with all permissions auto-approved
+    await Bun.write(join(workspacePath, "opencode.json"), JSON.stringify({
+      "$schema": "https://opencode.ai/config.json",
+      permission: {
+        edit: "allow", bash: "allow", webfetch: "allow", write: "allow",
+        codesearch: "allow", read: "allow", grep: "allow", glob: "allow",
+        list: "allow", lsp: "allow", skill: "allow", todowrite: "allow",
+        todoread: "allow", question: "allow",
+      },
+    }, null, 2));
+
     // Save active prefix for future runs
     await saveActivePrefix(prefix);
   } catch (err) {

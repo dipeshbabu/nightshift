@@ -3,7 +3,7 @@ import { renderBirdBanner } from "./lib/banner";
 import { getNightshiftVersion } from "./lib/constants";
 import { resolvePrefixFromConfig, saveActivePrefix } from "./lib/config";
 import { createWorkspace, installTools } from "./cli/handlers/install";
-import { run, resolveRunOptions, buildAttachTuiArgs } from "./cli/handlers/run";
+import { run, resolveRunOptions, buildAttachTuiArgs, type RalphOptions } from "./cli/handlers/run";
 import { runEval } from "./cli/handlers/eval";
 import { upgrade } from "./cli/handlers/upgrade";
 
@@ -49,6 +49,7 @@ if (import.meta.main) {
             process.exit(0);
           }
           // we're not skipping agent routine, start the Boot Agent Routine
+          // TODO: implement Boot Agent Routine
 
         } catch (err) {
           console.error("Install failed:", err);
@@ -74,19 +75,42 @@ if (import.meta.main) {
             type: "boolean",
             default: false,
             describe: "Run in sandbox mode (read-only host filesystem, writable workspace)",
+          })
+          .option("ralph", {
+            type: "boolean",
+            default: false,
+            describe: "Run in executor/validator loop mode",
+          })
+          .option("prompt", {
+            type: "string",
+            describe: "Path to prompt file for ralph mode",
+          })
+          .option("agent-model", {
+            type: "string",
+            default: "openai/gpt-5.2-codex",
+            describe: "Model for executor in ralph mode",
+          })
+          .option("eval-model", {
+            type: "string",
+            default: "openai/gpt-5.2-codex",
+            describe: "Model for validator in ralph mode",
           }),
       async (argv) => {
         try {
-          const { extra, useNightshiftTui, sandboxEnabled } = resolveRunOptions(argv, process.argv);
+          const { extra, useNightshiftTui, sandboxEnabled, ralphEnabled, ralphPrompt, ralphAgentModel, ralphEvalModel } = resolveRunOptions(argv, process.argv);
+          const ralphOptions: RalphOptions | undefined = ralphEnabled
+            ? { enabled: true, prompt: ralphPrompt, agentModel: ralphAgentModel, evalModel: ralphEvalModel, useNightshiftTui }
+            : undefined;
+
           if (argv.prefix) {
             await saveActivePrefix(argv.prefix);
-            await run(argv.prefix, extra, useNightshiftTui, sandboxEnabled);
+            await run(argv.prefix, extra, useNightshiftTui, sandboxEnabled, ralphOptions);
             return;
           }
 
           const resolved = await resolvePrefixFromConfig(process.cwd());
           console.log(`Using prefix from ${resolved.source}`);
-          await run(resolved.prefix, extra, useNightshiftTui, sandboxEnabled);
+          await run(resolved.prefix, extra, useNightshiftTui, sandboxEnabled, ralphOptions);
         } catch (err) {
           console.error("Run failed:", err);
           process.exit(1);

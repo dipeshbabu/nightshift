@@ -31,6 +31,7 @@ import { DialogAlert } from "../../ui/dialog-alert"
 import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
+import { useArgs } from "@tui/context/args"
 
 export type PromptProps = {
   sessionID?: string
@@ -70,6 +71,7 @@ export function Prompt(props: PromptProps) {
   const sync = useSync()
   const dialog = useDialog()
   const toast = useToast()
+  const args = useArgs()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
   const history = usePromptHistory()
   const stash = usePromptStash()
@@ -504,6 +506,21 @@ export function Prompt(props: PromptProps) {
       promptModelWarning()
       return
     }
+
+    // Ralph mode: resolve the prompt callback instead of creating a session
+    if (args.ralph && (globalThis as any).__ralphPromptResolve) {
+      const resolve = (globalThis as any).__ralphPromptResolve
+      delete (globalThis as any).__ralphPromptResolve
+      resolve(store.prompt.input)
+      history.append({ ...store.prompt, mode: store.mode })
+      input.extmarks.clear()
+      setStore("prompt", { input: "", parts: [] })
+      setStore("extmarkToPartIndex", new Map())
+      props.onSubmit?.()
+      input.clear()
+      return
+    }
+
     const sessionID = props.sessionID
       ? props.sessionID
       : await (async () => {
