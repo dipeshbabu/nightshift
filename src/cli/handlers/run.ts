@@ -6,6 +6,8 @@ import { buildXdgEnv, buildUvEnv } from "../../lib/env";
 import { buildSandboxCommand, type SandboxOptions } from "../../lib/sandbox";
 import { startAgentServer } from "../agents/server";
 import { runAgentLoop } from "../agents/loop";
+import { createBus, taggedPublisher } from "../agents/bus";
+import type { RalphEvent } from "../agents/events";
 
 export function extractExtraArgs(argv: string[]): string[] {
   const dashIdx = argv.indexOf("--");
@@ -57,6 +59,8 @@ export interface RalphOptions {
   agentModel: string;
   evalModel: string;
   useNightshiftTui: boolean;
+  serve?: boolean;
+  servePort?: number;
 }
 
 export async function run(prefix: string, args: string[], useNightshiftTui: boolean, sandboxEnabled: boolean, ralphOptions?: RalphOptions): Promise<void> {
@@ -209,24 +213,142 @@ async function runWithNightshiftTui(opencodePath: string, PATH: string, workspac
   }
 }
 
+function formatEventForCli(event: RalphEvent): string | null {
+  switch (event.type) {
+    case "ralph.started":
+      return `[ralph] Workspace: ${event.workspace}\n[ralph] Starting executor and validator servers...`;
+    case "ralph.completed":
+      return `[ralph] Completed after ${event.iterations} iteration(s). Done: ${event.done}`;
+    case "ralph.error":
+      return `[ralph] Error: ${event.error}`;
+    case "server.ready":
+      return event.reused
+        ? `[ralph] Reusing existing ${event.name} server (port ${event.port})`
+        : `[ralph] Started ${event.name} server (port ${event.port})`;
+    case "server.cleanup":
+      return `[ralph] Cleaning up stale ${event.name} process (pid ${event.pid})`;
+    case "loop.iteration.start":
+      return `\n[ralph] ── Iteration ${event.iteration} ──`;
+    case "loop.done":
+      return `[ralph] Boss says DONE. Exiting.`;
+    case "loop.not_done":
+      return `[ralph] Not done yet. Looping...`;
+    case "loop.max_iterations":
+      return `[ralph] Reached max iterations (${event.maxIterations}). Exiting.`;
+    case "worker.start":
+      return `\n[ralph] ── Worker run on ${event.commitHash} ──`;
+    case "worker.complete":
+      return event.logPath ? `\n[ralph] Worker log: ${event.logPath}` : null;
+    case "boss.start":
+      return `[ralph] ── Boss on ${event.commitHash} ──`;
+    case "boss.complete":
+      return event.logPath ? `\n[ralph] Boss log: ${event.logPath}` : null;
+    case "session.text.delta":
+      process.stdout.write(event.delta);
+      return null;
+    case "session.tool.status": {
+      const { tool, status, detail, input, output, duration } = event;
+      const title = detail || tool;
+      if (status === "running") {
+        let msg = `\n▶ ${title}`;
+        if (input) msg += ` ${JSON.stringify(input)}`;
+        return msg;
+      }
+      if (status === "completed") {
+        let msg = `✓ ${title}`;
+        if (duration !== undefined) msg += ` (${duration.toFixed(1)}s)`;
+        if (output) msg += `\n${output}`;
+        return msg;
+      }
+      if (status === "error") {
+        let msg = `✗ ${title}: ${detail}`;
+        if (input) msg += `\n  input: ${JSON.stringify(input)}`;
+        if (duration !== undefined) msg += `\n  duration: ${duration.toFixed(1)}s`;
+        return msg;
+      }
+      return null;
+    }
+    case "session.permission":
+      return `[Auto-approving ${event.permission}${event.description ? `: ${event.description}` : ""}]`;
+    default:
+      return null;
+  }
+}
+
 async function runWithRalph(prefix: string, workspacePath: string, options: RalphOptions): Promise<void> {
-  const { agentModel, evalModel, useNightshiftTui } = options;
+  const { agentModel, evalModel } = options;
   const logDir = join(prefix, "agent_logs");
   mkdirSync(logDir, { recursive: true });
 
-  console.log(`[ralph] Workspace: ${workspacePath}`);
-  console.log("[ralph] Starting executor and validator servers...");
+  const bus = createBus();
+
+  // Serve mode: start HTTP server, prompt comes from POST requests
+  if (options.serve) {
+    const { startRalphServer } = await import("../agents/ralph-server");
+    const port = options.servePort ?? 3000;
+
+    startRalphServer({
+      port,
+      bus,
+      onPrompt: async (prompt: string, runId: string) => {
+        const publisher = taggedPublisher(bus, runId);
+
+        // Start fresh agent servers per prompt run
+        const [bossHandle, workerHandle] = await Promise.all([
+          startAgentServer({ prefix, workspace: workspacePath, name: `nightshift-boss-${Date.now()}`, bus: publisher }),
+          startAgentServer({ prefix, workspace: workspacePath, name: `nightshift-worker-${Date.now()}`, bus: publisher }),
+        ]);
+
+        try {
+          await runAgentLoop({
+            workerClient: workerHandle.client,
+            bossClient: bossHandle.client,
+            workspace: workspacePath,
+            prompt,
+            agentModel,
+            evalModel,
+            logDir,
+            bus: publisher,
+          });
+        } finally {
+          bossHandle.kill();
+          workerHandle.kill();
+        }
+      },
+    });
+
+    // Keep process alive
+    await new Promise(() => {});
+    return;
+  }
+
+  // CLI mode: subscribe to bus and format events to console
+  const runId = crypto.randomUUID();
+  const publisher = taggedPublisher(bus, runId);
+
+  bus.subscribeAll((event) => {
+    const line = formatEventForCli(event);
+    if (line !== null) console.log(line);
+  });
+
+  publisher.publish({
+    type: "ralph.started",
+    timestamp: Date.now(),
+    workspace: workspacePath,
+    agentModel,
+    evalModel,
+  });
 
   // handles to both the worker and the boss agents
   const [bossHandle, workerHandle] = await Promise.all([
-    startAgentServer({ prefix, workspace: workspacePath, name: "nightshift-boss" }),
-    startAgentServer({ prefix, workspace: workspacePath, name: "nightshift-worker" }),
+    startAgentServer({ prefix, workspace: workspacePath, name: "nightshift-boss", bus: publisher }),
+    startAgentServer({ prefix, workspace: workspacePath, name: "nightshift-worker", bus: publisher }),
   ]);
   const killAll = () => {
     bossHandle.kill();
     workerHandle.kill();
   };
-  let prompt: string;
+
   // you can programatically interact with the agent server by passing in a prompt
   if (!options.prompt) {
     throw new Error("[ralph] --prompt <file> is required");
@@ -235,11 +357,11 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
   if (!(await promptFile.exists())) {
     throw new Error(`[ralph] Prompt file not found: ${options.prompt}`);
   }
-  prompt = await promptFile.text();
+  const prompt = await promptFile.text();
 
   // this is the main agent loop for the ralph worker/boss setup
   try {
-    await runAgentLoop({
+    const result = await runAgentLoop({
       workerClient: workerHandle.client,
       bossClient: bossHandle.client,
       workspace: workspacePath,
@@ -247,6 +369,14 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
       agentModel,
       evalModel,
       logDir,
+      bus: publisher,
+    });
+
+    publisher.publish({
+      type: "ralph.completed",
+      timestamp: Date.now(),
+      iterations: result.iterations,
+      done: result.done,
     });
   } finally {
     killAll();

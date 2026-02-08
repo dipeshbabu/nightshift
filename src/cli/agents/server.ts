@@ -5,6 +5,7 @@ import { buildXdgEnv, buildUvEnv, buildPath } from "../../lib/env";
 import { waitForServer } from "../../lib/server";
 import { buildSandboxCommand } from "../../lib/sandbox";
 import type { Subprocess } from "bun";
+import type { EventPublisher } from "./bus";
 
 export interface ServerHandle {
   proc: Subprocess | null;
@@ -66,15 +67,20 @@ export async function startAgentServer(opts: {
   workspace: string;
   port?: number;
   name?: string;
+  bus?: EventPublisher;
 }): Promise<ServerHandle> {
-  const { prefix, workspace, name = "nightshift-ralph" } = opts;
+  const { prefix, workspace, name = "nightshift-ralph", bus } = opts;
 
   // Try to reuse an existing server for this name
   const existing = await readPidFile(prefix, name);
   if (existing && isProcessAlive(existing.pid)) {
     const existingUrl = `http://127.0.0.1:${existing.port}`;
     if (await isServerHealthy(existingUrl)) {
-      console.log(`[ralph] Reusing existing ${name} server (pid ${existing.pid}, port ${existing.port})`);
+      if (bus) {
+        bus.publish({ type: "server.ready", timestamp: Date.now(), name, port: existing.port, reused: true });
+      } else {
+        console.log(`[ralph] Reusing existing ${name} server (pid ${existing.pid}, port ${existing.port})`);
+      }
       const client = createOpencodeClient({ baseUrl: existingUrl });
       return {
         proc: null,
@@ -88,7 +94,11 @@ export async function startAgentServer(opts: {
       };
     }
     // Stale process, kill it
-    console.log(`[ralph] Cleaning up stale ${name} process (pid ${existing.pid})`);
+    if (bus) {
+      bus.publish({ type: "server.cleanup", timestamp: Date.now(), name, pid: existing.pid });
+    } else {
+      console.log(`[ralph] Cleaning up stale ${name} process (pid ${existing.pid})`);
+    }
     try { process.kill(existing.pid); } catch { }
     removePidFile(prefix, name);
   }
@@ -120,6 +130,9 @@ export async function startAgentServer(opts: {
 
   await waitForServer(serverUrl);
   writePidFile(prefix, name, { pid: proc.pid, port });
+  if (bus) {
+    bus.publish({ type: "server.ready", timestamp: Date.now(), name, port, reused: false });
+  }
   const client = createOpencodeClient({ baseUrl: serverUrl });
 
   return {

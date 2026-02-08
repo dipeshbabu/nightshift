@@ -12,7 +12,10 @@ function installCompleteMessage() {
 }
 
 if (import.meta.main) {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  // Strip "serve" positional so yargs strict mode doesn't reject it
+  // (serve mode is detected separately from process.argv)
+  const args = rawArgs.filter((a) => a !== "serve");
   if (args.includes("--help") || args.includes("-h") || args.length === 0) {
     renderBirdBanner();
   }
@@ -94,12 +97,29 @@ if (import.meta.main) {
             type: "string",
             default: "openai/gpt-5.2-codex",
             describe: "Model for validator in ralph mode",
+          })
+          .option("serve-port", {
+            type: "number",
+            default: 3000,
+            describe: "Port for ralph HTTP server in serve mode",
           }),
       async (argv) => {
         try {
           const { extra, useNightshiftTui, sandboxEnabled, ralphEnabled, ralphPrompt, ralphAgentModel, ralphEvalModel } = resolveRunOptions(argv, process.argv);
+
+          // Detect "serve" positional after --ralph
+          const serveMode = ralphEnabled && process.argv.slice(2).includes("serve");
+
           const ralphOptions: RalphOptions | undefined = ralphEnabled
-            ? { enabled: true, prompt: ralphPrompt, agentModel: ralphAgentModel, evalModel: ralphEvalModel, useNightshiftTui }
+            ? {
+                enabled: true,
+                prompt: ralphPrompt,
+                agentModel: ralphAgentModel,
+                evalModel: ralphEvalModel,
+                useNightshiftTui,
+                serve: serveMode,
+                servePort: argv["serve-port"] as number,
+              }
             : undefined;
 
           if (argv.prefix) {

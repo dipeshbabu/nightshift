@@ -52,6 +52,12 @@
         ]
       },
       {
+        "group": "System",
+        "pages": [
+          "system/ralph-server"
+        ]
+      },
+      {
         "group": "Development",
         "pages": [
           "contributing"
