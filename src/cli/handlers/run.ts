@@ -300,7 +300,7 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
         ]);
 
         try {
-          await runAgentLoop({
+          const result = await runAgentLoop({
             workerClient: workerHandle.client,
             bossClient: bossHandle.client,
             workspace: workspacePath,
@@ -310,6 +310,13 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
             logDir,
             bus: publisher,
           });
+
+          publisher.publish({
+            type: "ralph.completed",
+            timestamp: Date.now(),
+            iterations: result.iterations,
+            done: result.done,
+          });
         } finally {
           bossHandle.kill();
           workerHandle.kill();
@@ -317,8 +324,13 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
       },
     });
 
-    // Keep process alive
-    await new Promise(() => {});
+    if (options.useNightshiftTui) {
+      const { ralphTui } = await import("../../tui/ralph/index");
+      await ralphTui({ serverUrl: `http://localhost:${port}` });
+    } else {
+      // Keep process alive
+      await new Promise(() => {});
+    }
     return;
   }
 
