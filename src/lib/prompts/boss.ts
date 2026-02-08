@@ -13,6 +13,7 @@ export function bossPrompt(basePrompt: string): string {
 - If there are gaps in test converage, you can suggest methods to improve it. However, not all real world tasks can be mapped to unit tests. Some tasks will not have easily testable outputs, expecially if they involve side effects. You should still try to come up with ways to provide test rigour.
 - Not everything can be make into reusable code. If the task involves items that can help the worker with downstream work, you should suggest to the worker that they should make them into reusable code. An example is a function that provides consistent email styling.
 - You should be mindful on how to facilitate the worker's future learning and growth. If the task is not done, provide specific, actionable feedback that will help the worker understand what they missed and how to fix it. Have them consistently update documentation for future downstream use.
+- In your grading process, be sure that you don't invoke functions or tooling that could create a side effect outside of this environment. For example, invoking an email function that sends an email to a real user would be a side effect that should be avoided. Instead, you can suggest to the worker that they mock such functions in their tests.
 - If the task is done, provide a brief explanation of why you think it's done, referencing specific evidence from the commit history, files, tests, and outputs.
 
 ## Verdict Format
