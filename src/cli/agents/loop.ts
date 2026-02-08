@@ -3,8 +3,8 @@ import { execute } from "./worker";
 import { validate } from "./boss";
 
 export interface AgentLoopOptions {
-  executorClient: ReturnType<typeof createOpencodeClient>;
-  validatorClient: ReturnType<typeof createOpencodeClient>;
+  workerClient: ReturnType<typeof createOpencodeClient>;
+  bossClient: ReturnType<typeof createOpencodeClient>;
   workspace: string;
   prompt: string;
   agentModel: string;
@@ -22,8 +22,8 @@ export interface AgentLoopResult {
 
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const {
-    executorClient,
-    validatorClient,
+    workerClient,
+    bossClient,
     workspace,
     prompt,
     agentModel,
@@ -40,9 +40,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   for (let i = 0; i < maxIterations; i++) {
     iterations = i + 1;
 
-    // Executor phase (worker)
+    // worker
     const execResult = await execute({
-      client: executorClient,
+      client: workerClient,
       workspace,
       basePrompt: prompt,
       model: agentModel,
@@ -51,9 +51,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       onText: onText ? (text) => onText("executor", text) : undefined,
     });
 
-    // Validator phase (boss) 
+    // boss
     const valResult = await validate({
-      client: validatorClient,
+      client: bossClient,
       basePrompt: prompt,
       model: evalModel,
       commitHash: execResult.commitHash,

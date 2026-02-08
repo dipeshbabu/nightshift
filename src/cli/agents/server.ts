@@ -30,7 +30,7 @@ function writePidFile(prefix: string, name: string, info: PidInfo): void {
 }
 
 function removePidFile(prefix: string, name: string): void {
-  try { unlinkSync(pidFilePath(prefix, name)); } catch {}
+  try { unlinkSync(pidFilePath(prefix, name)); } catch { }
 }
 
 async function readPidFile(prefix: string, name: string): Promise<PidInfo | null> {
@@ -82,14 +82,14 @@ export async function startAgentServer(opts: {
         serverUrl: existingUrl,
         name,
         kill: () => {
-          try { process.kill(existing.pid); } catch {}
+          try { process.kill(existing.pid); } catch { }
           removePidFile(prefix, name);
         },
       };
     }
-    // Stale process — kill it
+    // Stale process, kill it
     console.log(`[ralph] Cleaning up stale ${name} process (pid ${existing.pid})`);
-    try { process.kill(existing.pid); } catch {}
+    try { process.kill(existing.pid); } catch { }
     removePidFile(prefix, name);
   }
 

@@ -217,77 +217,40 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
   console.log(`[ralph] Workspace: ${workspacePath}`);
   console.log("[ralph] Starting executor and validator servers...");
 
-  const [executorHandle, validatorHandle] = await Promise.all([
-    startAgentServer({ prefix, workspace: workspacePath, name: "nightshift-executor" }),
-    startAgentServer({ prefix, workspace: workspacePath, name: "nightshift-validator" }),
+  // handles to both the worker and the boss agents
+  const [bossHandle, workerHandle] = await Promise.all([
+    startAgentServer({ prefix, workspace: workspacePath, name: "nightshift-boss" }),
+    startAgentServer({ prefix, workspace: workspacePath, name: "nightshift-worker" }),
   ]);
-
   const killAll = () => {
-    executorHandle.kill();
-    validatorHandle.kill();
+    bossHandle.kill();
+    workerHandle.kill();
   };
-
-  // Auth is handled by each opencode server via auth.json in XDG_DATA_HOME
-
   let prompt: string;
-
-  if (useNightshiftTui) {
-    // Start TUI and wait for prompt from user — connects to executor server
-    const { tui } = await import("../../tui/tui/app");
-    const promptPromise = new Promise<string>((resolve) => {
-      // The TUI will call this when the user submits a prompt in ralph mode
-      (globalThis as any).__ralphPromptResolve = resolve;
-    });
-
-    // Launch TUI in the background — it renders to the terminal
-    const tuiPromise = tui({ url: executorHandle.serverUrl, args: { ralph: true }, directory: workspacePath });
-
-    console.log("[ralph] Waiting for prompt from TUI...");
-    prompt = await promptPromise;
-
-    // Run the loop (TUI stays active showing executor sessions)
-    try {
-      await runAgentLoop({
-        executorClient: executorHandle.client,
-        validatorClient: validatorHandle.client,
-        workspace: workspacePath,
-        prompt,
-        agentModel,
-        evalModel,
-        logDir,
-      });
-    } finally {
-      killAll();
-    }
-
-    // Wait for TUI to exit
-    await tuiPromise;
-  } else {
-    // Headless mode: read prompt from file
-    if (!options.prompt) {
-      throw new Error("[ralph] --prompt <file> is required when not using TUI");
-    }
-
-    const promptFile = Bun.file(options.prompt);
-    if (!(await promptFile.exists())) {
-      throw new Error(`[ralph] Prompt file not found: ${options.prompt}`);
-    }
-    prompt = await promptFile.text();
-
-    try {
-      await runAgentLoop({
-        executorClient: executorHandle.client,
-        validatorClient: validatorHandle.client,
-        workspace: workspacePath,
-        prompt,
-        agentModel,
-        evalModel,
-        logDir,
-      });
-    } finally {
-      killAll();
-    }
-
-    process.exit(0);
+  // you can programatically interact with the agent server by passing in a prompt
+  if (!options.prompt) {
+    throw new Error("[ralph] --prompt <file> is required");
   }
+  const promptFile = Bun.file(options.prompt);
+  if (!(await promptFile.exists())) {
+    throw new Error(`[ralph] Prompt file not found: ${options.prompt}`);
+  }
+  prompt = await promptFile.text();
+
+  // this is the main agent loop for the ralph worker/boss setup
+  try {
+    await runAgentLoop({
+      workerClient: workerHandle.client,
+      bossClient: bossHandle.client,
+      workspace: workspacePath,
+      prompt,
+      agentModel,
+      evalModel,
+      logDir,
+    });
+  } finally {
+    killAll();
+  }
+
+  process.exit(0);
 }
