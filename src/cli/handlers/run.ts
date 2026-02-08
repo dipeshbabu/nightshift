@@ -215,19 +215,24 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
   mkdirSync(logDir, { recursive: true });
 
   console.log(`[ralph] Workspace: ${workspacePath}`);
-  console.log("[ralph] Starting sandboxed opencode server...");
+  console.log("[ralph] Starting executor and validator servers...");
 
-  const handle = await startAgentServer({
-    prefix,
-    workspace: workspacePath,
-  });
+  const [executorHandle, validatorHandle] = await Promise.all([
+    startAgentServer({ prefix, workspace: workspacePath, name: "nightshift-executor" }),
+    startAgentServer({ prefix, workspace: workspacePath, name: "nightshift-validator" }),
+  ]);
 
-  // Auth is handled by the opencode server via auth.json in XDG_DATA_HOME
+  const killAll = () => {
+    executorHandle.kill();
+    validatorHandle.kill();
+  };
+
+  // Auth is handled by each opencode server via auth.json in XDG_DATA_HOME
 
   let prompt: string;
 
   if (useNightshiftTui) {
-    // Start TUI and wait for prompt from user
+    // Start TUI and wait for prompt from user — connects to executor server
     const { tui } = await import("../../tui/tui/app");
     const promptPromise = new Promise<string>((resolve) => {
       // The TUI will call this when the user submits a prompt in ralph mode
@@ -235,15 +240,16 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
     });
 
     // Launch TUI in the background — it renders to the terminal
-    const tuiPromise = tui({ url: handle.serverUrl, args: { ralph: true }, directory: workspacePath });
+    const tuiPromise = tui({ url: executorHandle.serverUrl, args: { ralph: true }, directory: workspacePath });
 
     console.log("[ralph] Waiting for prompt from TUI...");
     prompt = await promptPromise;
 
-    // Run the loop (TUI stays active showing sessions)
+    // Run the loop (TUI stays active showing executor sessions)
     try {
       await runAgentLoop({
-        client: handle.client,
+        executorClient: executorHandle.client,
+        validatorClient: validatorHandle.client,
         workspace: workspacePath,
         prompt,
         agentModel,
@@ -251,7 +257,7 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
         logDir,
       });
     } finally {
-      handle.kill();
+      killAll();
     }
 
     // Wait for TUI to exit
@@ -270,7 +276,8 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
 
     try {
       await runAgentLoop({
-        client: handle.client,
+        executorClient: executorHandle.client,
+        validatorClient: validatorHandle.client,
         workspace: workspacePath,
         prompt,
         agentModel,
@@ -278,7 +285,7 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
         logDir,
       });
     } finally {
-      handle.kill();
+      killAll();
     }
 
     process.exit(0);
