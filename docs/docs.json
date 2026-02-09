@@ -34,6 +34,7 @@
       {
         "group": "Concepts",
         "pages": [
+          "install",
           "ralph-loop",
           "worktrees"
         ]
@@ -41,6 +42,7 @@
       {
         "group": "System",
         "pages": [
+          "system/prefix-directory",
           "system/ralph-server"
         ]
       },
