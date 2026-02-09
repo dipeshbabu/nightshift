@@ -144,14 +144,18 @@ export function createJobBoard(
     root.add(editorBox);
     root.add(footer);
 
-    if (jobId) {
-      const job = state.jobs.find((j) => j.id === jobId);
-      if (job) editor.setText(job.prompt);
-    } else {
-      editor.setText("");
-    }
+    // Defer focus to next tick so the triggering keypress (n/e)
+    // doesn't propagate into the textarea
+    setTimeout(() => {
+      if (jobId) {
+        const job = state.jobs.find((j) => j.id === jobId);
+        if (job) editor.setText(job.prompt);
+      } else {
+        editor.setText("");
+      }
+      editor.focus();
+    }, 0);
 
-    editor.focus();
     refresh();
   }
 
