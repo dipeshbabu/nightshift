@@ -196,15 +196,16 @@ export function createJobBoard(
     hideEditor();
   }
 
-  let confirmAction: { type: "delete"; jobId: string } | { type: "quit" } | null = null;
+  let confirmAction: { type: "delete"; jobId: string } | { type: "stop"; jobId: string } | { type: "quit" } | null = null;
 
   function showConfirm(action: typeof confirmAction) {
     confirmAction = action;
-    if (action?.type === "delete") {
+    if (action?.type === "delete" || action?.type === "stop") {
       const job = state.jobs.find((j) => j.id === action.jobId);
       if (!job) { confirmAction = null; return; }
       const preview = job.prompt.length > 40 ? job.prompt.slice(0, 40) + "..." : job.prompt;
-      helpText.content = t`${red(bold("Delete"))} ${dim(`"${preview}"`)}? ${bold("y")}/${bold("n")}`;
+      const verb = action.type === "delete" ? "Delete" : "Stop";
+      helpText.content = t`${red(bold(verb))} ${dim(`"${preview}"`)}? ${bold("y")}/${bold("n")}`;
     } else if (action?.type === "quit") {
       helpText.content = t`Are you sure you want to quit Nightshift? ${bold("y")}/${bold("n")}`;
     }
@@ -228,6 +229,15 @@ export function createJobBoard(
           const id = confirmAction.jobId;
           client.deleteJob(id);
           state.jobs = state.jobs.filter((j) => j.id !== id);
+          hideConfirm();
+          refresh();
+        } else if (confirmAction.type === "stop") {
+          const id = confirmAction.jobId;
+          const job = state.jobs.find((j) => j.id === id);
+          if (job && job.runId) {
+            client.interruptRun(job.runId, "user_stop");
+            job.status = "interrupted";
+          }
           hideConfirm();
           refresh();
         } else if (confirmAction.type === "quit") {
@@ -281,9 +291,7 @@ export function createJobBoard(
       if (!id) return;
       const job = state.jobs.find((j) => j.id === id);
       if (job && job.status === "running" && job.runId) {
-        client.interruptRun(job.runId, "user_stop");
-        job.status = "interrupted";
-        refresh();
+        showConfirm({ type: "stop", jobId: id });
       }
       return;
     }
