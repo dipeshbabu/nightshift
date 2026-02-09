@@ -24,6 +24,8 @@ export interface JobBoardHandle {
   refresh: () => void;
 }
 
+const SPINNER_FRAMES = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+
 const STATUS_ICONS: Record<Job["status"], string> = {
   draft: "[ ]",
   running: "[*]",
@@ -110,12 +112,34 @@ export function createJobBoard(
   root.add(listBox);
   root.add(footer);
 
+  let spinnerFrame = 0;
+  let spinnerInterval: ReturnType<typeof setInterval> | null = null;
+
+  function statusIcon(status: Job["status"]) {
+    if (status === "running") return `[${SPINNER_FRAMES[spinnerFrame]}]`;
+    return STATUS_ICONS[status];
+  }
+
   function deriveOptions() {
     return state.jobs.map((job) => ({
-      name: `${STATUS_ICONS[job.status]} ${job.prompt.length > 60 ? job.prompt.slice(0, 60) + "..." : job.prompt}`,
+      name: `${statusIcon(job.status)} ${job.prompt.length > 60 ? job.prompt.slice(0, 60) + "..." : job.prompt}`,
       description: `Created ${new Date(job.createdAt).toLocaleTimeString()}`,
       value: job.id,
     }));
+  }
+
+  function startSpinnerTimer() {
+    if (spinnerInterval) return;
+    spinnerInterval = setInterval(() => {
+      spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
+      jobList.options = deriveOptions();
+    }, 80);
+  }
+
+  function stopSpinnerTimer() {
+    if (!spinnerInterval) return;
+    clearInterval(spinnerInterval);
+    spinnerInterval = null;
   }
 
   function refresh() {
@@ -124,8 +148,10 @@ export function createJobBoard(
     const hasRunning = state.jobs.some((j) => j.status === "running");
     if (hasRunning) {
       spinner.start();
+      startSpinnerTimer();
     } else {
       spinner.stop();
+      stopSpinnerTimer();
     }
 
     if (state.boardFocus === "list") {
@@ -322,6 +348,7 @@ export function createJobBoard(
       jobList.on(SelectRenderableEvents.ITEM_SELECTED, onItemSelected);
     },
     unmount() {
+      stopSpinnerTimer();
       renderer.keyInput.removeListener("keypress", onKeypress);
       jobList.removeListener(SelectRenderableEvents.ITEM_SELECTED, onItemSelected);
       renderer.root.remove("board-root");

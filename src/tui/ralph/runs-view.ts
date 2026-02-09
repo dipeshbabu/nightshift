@@ -21,6 +21,8 @@ export interface RunsViewHandle {
   refresh: () => void;
 }
 
+const SPINNER_FRAMES = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+
 const RUN_STATUS_ICONS: Record<RunStatus, string> = {
   running: "[*]",
   completed: "[+]",
@@ -97,13 +99,18 @@ export function createRunsView(
 
   // Per-run statuses fetched from server
   let runStatuses: Record<string, RunStatus> = {};
+  let spinnerFrame = 0;
+  let spinnerInterval: ReturnType<typeof setInterval> | null = null;
 
   function deriveOptions() {
     // Newest first
     const reversed = [...job.runIds].reverse();
     return reversed.map((runId, i) => {
       const runIndex = job.runIds.length - i;
-      const icon = RUN_STATUS_ICONS[runStatuses[runId] ?? "unknown"];
+      const isActive = runId === job.runId && job.status === "running";
+      const icon = isActive
+        ? `[${SPINNER_FRAMES[spinnerFrame]}]`
+        : RUN_STATUS_ICONS[runStatuses[runId] ?? "unknown"];
       return {
         name: `${icon} Run #${runIndex}`,
         description: runId.slice(0, 8),
@@ -112,13 +119,29 @@ export function createRunsView(
     });
   }
 
+  function startSpinnerTimer() {
+    if (spinnerInterval) return;
+    spinnerInterval = setInterval(() => {
+      spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
+      runList.options = deriveOptions();
+    }, 80);
+  }
+
+  function stopSpinnerTimer() {
+    if (!spinnerInterval) return;
+    clearInterval(spinnerInterval);
+    spinnerInterval = null;
+  }
+
   function refresh() {
     runList.options = deriveOptions();
-    const isRunning = job.status === "running";
-    if (isRunning) {
+    const isActive = job.status === "running";
+    if (isActive) {
       spinner.start();
+      startSpinnerTimer();
     } else {
       spinner.stop();
+      stopSpinnerTimer();
     }
   }
 
@@ -151,6 +174,7 @@ export function createRunsView(
       fetchStatuses();
     },
     unmount() {
+      stopSpinnerTimer();
       renderer.keyInput.removeListener("keypress", onKeypress);
       runList.removeListener(SelectRenderableEvents.ITEM_SELECTED, onItemSelected);
       renderer.root.remove("runs-view-root");
