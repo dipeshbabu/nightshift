@@ -1,0 +1,102 @@
+---
+title: Install
+description: How nightshift install sets up an isolated, reproducible agent environment
+---
+
+<Warning>
+  Nightshift is currently in its infancy and is subject to change and incompleteness.
+  If you find a bug, or have an idea to improve Nightshift, please raise an issue on [Github](https://github.com/nightshiftco/nightshift/tree/main).
+</Warning>
+
+`nightshift install` creates a fully isolated agent environment at a given prefix directory. It downloads all required tools, scaffolds a Python workspace, installs dependencies, and initializes a git repository, this is everything the agent needs to start working.
+
+```bash
+nightshift install --prefix ~/my-agent
+```
+
+## What Gets Installed
+
+The install command runs two phases: **tool installation** and **workspace creation**.
+
+### Phase 1: Tool Installation
+
+Nightshift detects your platform (macOS or Linux, x64 or arm64) and downloads platform-specific binaries for:
+
+| Tool | Purpose |
+|------|---------|
+| **OpenCode** | The coding agent harness |
+| **uv** | Python package manager (replaces pip/venv) |
+| **ripgrep** | Fast code search (used by agents) |
+| **ty** | Python type checker (installed via `uv tool install`) |
+
+Each tool is downloaded, extracted, and symlinked into `<prefix>/bin/`. Archives are cleaned up after extraction.
+
+### Phase 2: Workspace Creation
+
+After tools are installed, Nightshift creates a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces) with:
+
+1. **Project scaffold** — A `pyproject.toml` with default data science packages (`numpy`, `pandas`, `matplotlib`, `scikit-learn`, `jupyter`), a library skeleton under `src/nightshift_agent_lib/`, and starter tests.
+
+2. **Dependency sync** — Runs `uv sync` to create a `.venv` and install all dependencies.
+
+3. **OpenCode config** — Writes an `opencode.json` with all agent permissions auto-approved.
+
+4. **Git init** — Initializes a git repository and commits the scaffold. This initial commit is required for [worktree](/worktrees) isolation to work correctly.
+
+5. **XDG directories** — Creates isolated `config/`, `share/`, `cache/`, and `state/` directories so OpenCode's configuration doesn't collide with your system.
+
+## Prefix Layout
+
+After install completes, the prefix directory looks like this:
+
+```
+<prefix>/
+├── bin/                    # Symlinks to all tool binaries
+│   ├── opencode → ../tools/opencode/opencode
+│   ├── uv → ../tools/uv/uv-<triple>/uv
+│   └── rg → ../tools/ripgrep/ripgrep-<version>-<triple>/rg
+├── tools/                  # Extracted tool binaries
+│   ├── opencode/
+│   ├── uv/
+│   └── ripgrep/
+├── uv-tools/               # Tools installed via uv (ty)
+│   └── bin/
+├── workspace/              # The agent's working directory
+│   ├── pyproject.toml
+│   ├── opencode.json
+│   ├── src/nightshift_agent_lib/
+│   ├── tests/
+│   ├── .venv/
+│   └── .git/
+├── config/                 # XDG_CONFIG_HOME
+├── share/                  # XDG_DATA_HOME
+├── cache/                  # XDG_CACHE_HOME
+└── state/                  # XDG_STATE_HOME
+```
+
+## Environment Isolation
+
+When `nightshift run` launches OpenCode, it constructs an isolated `PATH` and XDG environment so the agent uses only the tools inside the prefix:
+
+| Variable | Value |
+|----------|-------|
+| `PATH` | `<prefix>/uv-tools/bin:<prefix>/bin:<workspace>/.venv/bin:$PATH` |
+| `XDG_CONFIG_HOME` | `<prefix>/config` |
+| `XDG_DATA_HOME` | `<prefix>/share` |
+| `XDG_CACHE_HOME` | `<prefix>/cache` |
+| `XDG_STATE_HOME` | `<prefix>/state` |
+| `UV_PYTHON_INSTALL_DIR` | `<prefix>/python` |
+| `UV_PYTHON_PREFERENCE` | `only-managed` |
+
+This ensures agents operate in a reproducible environment regardless of what's installed on the host system. This also keeps the agent off the host system.
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--prefix <path>` | — | **(required)** Directory to install into. Must not already exist. |
+| `--skip-ai-boot` | `false` | Skip the Boot Agent routine after install. |
+
+## Idempotency
+
+The install command requires a fresh prefix directory — it will exit with an error if the directory already exists. To reinstall, remove the prefix directory first and run install again.

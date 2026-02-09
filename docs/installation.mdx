@@ -43,18 +43,3 @@ bun run build:single
 
 The binary will be output to `dist/nightshift-<os>-<arch>/bin/nightshift`.
 
-## Toolchain layout
-
-Nightshift installs into a prefix directory you control, you can think of this as the agent's profile:
-
-```
-<prefix>/
-  bin/          # symlinks: opencode, uv, rg
-  tools/        # extracted tool archives
-  python/       # uv-managed Python installations
-  venvs/
-    data-science/  # numpy + pandas
-  workspace/    # writeable uv workspace
-```
-
-Pinned tool versions live in `src/index.ts` so you can update them centrally. We're working on making this more streamlined.
