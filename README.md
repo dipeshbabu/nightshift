@@ -1,23 +1,94 @@
-# Nightshift
+<p align="center">
+  <img src="docs/logo/kokapo.gif" alt="Kokapo" width="120" />
+</p>
 
-Nightshift is a CLI that installs and runs Coding Agents in isolated, reproducible, and sandboxed environments. It also provides utilities for Agent Routines and Evaluations.
+<p align="center">
+  <img src="docs/logo/nightshift-text.png" alt="Nightshift" width="400" />
+</p>
 
-As Coding Agents like OpenCode, Claude Code, and Cursor become more capable, a new generation of agents is emerging with access to host computers—able to perform actions and maintain code on the user's behalf. Nightshift provides a portable, agent-agnostic toolchain that makes it easy to configure environments for these agents while giving them the ability to bootstrap themselves.
+<p align="center">
+  Turn Coding Agents into autonomous knowledge workers.
+</p>
 
-Nightshift was designed to support distribution of Coding Agents to non-technical users, giving the agent the environment it needs to do its job, personalization and sustainability through Agent routines, while ensuring safety for the host machine through sandboxing.
+<p align="center">
+  <a href="https://nightshift.sh">Website</a> &middot;
+  <a href="https://docs.nightshift.sh">Docs</a> &middot;
+  <a href="https://join.slack.com/t/nightshiftoss/shared_invite/zt-3p5dshiiq-hjB8558QvURDgqqCI7e8RQ">Slack</a>
+</p>
 
-## What you get when you use Nightshift
+---
 
-- **Isolated Toolchain** — installed in a self-contained prefix, separate from your system
-- **Python & UV Workspace** — Pre-configured virtual environments standalone from your system Python
-- **Agent Routines** — Agent-generated `SKILLS.md` and `AGENTS.md` based on a `BOOT.md` file for self-configuration and long horizon maintainance
-- **Sandbox Mode** — Optional read-only host filesystem with writable workspace using `bwrap` on Linux and `sandbox-exec` on macOS
-- **Eval Harness** — Benchmark different LLMs in configuration, administration, and coding tasks
-- **Single Binary CLI** — Cross-platform support for macOS and Linux (x64 and arm64)
+Nightshift is a CLI that takes Coding Agents like [OpenCode](https://opencode.ai/), [Claude Code](https://code.claude.com/docs/en/overview), and [Codex](https://developers.openai.com/codex/cli/) and turns them into autonomous problem solvers that can complete complex, long-running knowledge work tasks.
 
-## Requirements
+> Nightshift is in early development and subject to change. If you find a bug or have an idea, please [open an issue](https://github.com/nightshiftco/nightshift/issues).
 
-- macOS or Linux (x64 or arm64)
-- Bun installed and on PATH
-- System tools: `curl`, `tar`, and `unzip`
-- Network access to GitHub releases
+## Features
+
+- **Isolated environments** — Each agent runs in its own prefix directory with pinned tools, a managed Python installation, XDG isolation, and a lightweight sandbox. Nothing touches your host system.
+- **Autonomous execution** — The Ralph loop pairs a worker agent with a boss agent. The worker codes, the boss evaluates, and the loop continues until the task is done.
+- **Concurrent task isolation** — Worktrees give each task its own git branch and working directory so multiple tasks can run in parallel without conflicts.
+- **Reproducibility** — Every tool version is pinned. Every environment is built from scratch. The same install command produces the same result on any machine.
+
+## Installation
+
+### Download the binary
+
+```bash
+curl https://nightshift.sh/install | sh
+```
+
+### Build from source
+
+Nightshift is a [Bun](https://bun.sh/) project that compiles to a single binary.
+
+```bash
+git clone git@github.com:nightshiftco/nightshift.git
+cd nightshift
+bun install
+bun run build:single
+```
+
+The binary will be output to `dist/nightshift-<os>-<arch>/bin/nightshift`.
+
+## Quickstart
+
+```bash
+# Install the toolchain into an isolated prefix
+nightshift install --prefix ~/my-agent
+
+# Launch OpenCode with the prefix as the working directory
+nightshift run
+
+# Run the autonomous Ralph loop from a prompt file
+nightshift run --ralph --prompt task.txt
+
+# Start the Ralph HTTP server
+nightshift run --ralph serve --serve-port 3000
+
+# Ralph server with the Jobs TUI
+nightshift run --ralph serve --run-nightshift-tui
+```
+
+## How it works
+
+`nightshift install` downloads OpenCode, uv, ripgrep, and ty into a self-contained prefix directory, scaffolds a Python workspace with common data science packages, and initializes a git repo — everything the agent needs to start working.
+
+`nightshift run` launches the agent inside that isolated environment with its own `PATH`, XDG directories, and optional sandbox.
+
+`nightshift run --ralph` activates the Ralph loop: a **worker** agent executes the task, a **boss** agent evaluates the output, and the cycle repeats until the boss approves or the iteration limit is reached.
+
+## Documentation
+
+Full documentation is available at [docs.nightshift.sh](https://docs.nightshift.sh):
+
+- [Installation](https://docs.nightshift.sh/installation) — Download or build from source
+- [Install command](https://docs.nightshift.sh/install) — How the prefix environment is set up
+- [Ralph Loop](https://docs.nightshift.sh/ralph-loop) — Autonomous worker/boss execution
+- [Worktrees](https://docs.nightshift.sh/worktrees) — Concurrent task isolation with git worktrees
+- [Sandbox](https://docs.nightshift.sh/sandbox) — Read-only host filesystem protection
+- [Ralph Server](https://docs.nightshift.sh/system/ralph-server) — HTTP API for submitting tasks
+- [Contributing](https://docs.nightshift.sh/contributing) — How to contribute
+
+## License
+
+See [LICENSE](LICENSE) for details.
