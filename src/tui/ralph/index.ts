@@ -1,9 +1,12 @@
 import { createCliRenderer } from "@opentui/core";
-import { createState, getJob } from "./state";
+import { createState, getJob, getBoot, type AppState } from "./state";
 import { RalphClient } from "./client";
 import { createJobBoard, type JobBoardHandle } from "./job-board";
 import { createRunsView, type RunsViewHandle } from "./runs-view";
 import { createJobView, type JobViewHandle } from "./job-view";
+import { createBootBoard, type BootBoardHandle } from "./boot-board";
+import { createBootRunsView, type BootRunsViewHandle } from "./boot-runs-view";
+import { createBootView, type BootViewHandle } from "./boot-view";
 import type { RalphEvent } from "../../cli/agents/events";
 
 export async function ralphTui(opts: { serverUrl: string }) {
@@ -27,14 +30,21 @@ export async function ralphTui(opts: { serverUrl: string }) {
   let boardHandle: JobBoardHandle | null = null;
   let runsViewHandle: RunsViewHandle | null = null;
   let viewHandle: JobViewHandle | null = null;
+  let bootBoardHandle: BootBoardHandle | null = null;
+  let bootRunsViewHandle: BootRunsViewHandle | null = null;
+  let bootViewHandle: BootViewHandle | null = null;
 
   // Lightweight SSE watchers for jobs running in the background (from the board)
   const bgWatchers = new Map<string, { abort: () => void }>();
 
   async function quit() {
-    // Interrupt all running jobs before exiting
+    // Interrupt all running jobs and boots before exiting
     const running = state.jobs.filter((j) => j.status === "running" && j.runId);
-    await Promise.all(running.map((j) => client.interruptRun(j.runId!, "user_quit")));
+    const runningBoots = state.boots.filter((j) => j.status === "running" && j.runId);
+    await Promise.all([
+      ...running.map((j) => client.interruptRun(j.runId!, "user_quit")),
+      ...runningBoots.map((j) => client.interruptRun(j.runId!, "user_quit")),
+    ]);
 
     for (const w of bgWatchers.values()) w.abort();
     bgWatchers.clear();
@@ -46,13 +56,19 @@ export async function ralphTui(opts: { serverUrl: string }) {
     quit();
   });
 
-  function navigate(view: "job-board" | "runs-view" | "job-view", jobId?: string, runId?: string) {
+  function navigate(view: AppState["view"], jobId?: string, runId?: string) {
     boardHandle?.unmount();
     boardHandle = null;
     runsViewHandle?.unmount();
     runsViewHandle = null;
     viewHandle?.unmount();
     viewHandle = null;
+    bootBoardHandle?.unmount();
+    bootBoardHandle = null;
+    bootRunsViewHandle?.unmount();
+    bootRunsViewHandle = null;
+    bootViewHandle?.unmount();
+    bootViewHandle = null;
 
     state.view = view;
 
@@ -67,6 +83,9 @@ export async function ralphTui(opts: { serverUrl: string }) {
         },
         onQuit() {
           quit();
+        },
+        onSwitchToBoots() {
+          navigate("boot-board");
         },
       });
       boardHandle.mount();
@@ -116,6 +135,69 @@ export async function ralphTui(opts: { serverUrl: string }) {
         },
       });
       viewHandle.mount();
+    } else if (view === "boot-board") {
+      state.activeBootId = null;
+      bootBoardHandle = createBootBoard(renderer, state, client, {
+        onViewBoot(id) {
+          navigate("boot-runs-view", id);
+        },
+        onRunBoot(id) {
+          runBoot(id);
+        },
+        onQuit() {
+          quit();
+        },
+        onSwitchToJobs() {
+          navigate("job-board");
+        },
+      });
+      bootBoardHandle.mount();
+    } else if (view === "boot-runs-view" && jobId) {
+      state.activeBootId = jobId;
+      const boot = getBoot(state, jobId);
+      if (!boot) {
+        navigate("boot-board");
+        return;
+      }
+
+      bootRunsViewHandle = createBootRunsView(renderer, boot, client, {
+        onViewRun(selectedRunId) {
+          navigate("boot-view", jobId, selectedRunId);
+        },
+        onBack() {
+          navigate("boot-board");
+        },
+      });
+      bootRunsViewHandle.mount();
+    } else if (view === "boot-view" && jobId && runId) {
+      state.activeBootId = jobId;
+      const boot = getBoot(state, jobId);
+      if (!boot) {
+        navigate("boot-board");
+        return;
+      }
+
+      bootViewHandle = createBootView(renderer, opts.serverUrl, boot, runId, client, {
+        onBack() {
+          navigate("boot-runs-view", jobId);
+        },
+        onJobStatusChange(id, status, newRunId) {
+          const b = getBoot(state, id);
+          if (b) {
+            b.status = status;
+            if (newRunId) {
+              b.runId = newRunId;
+              if (!b.runIds.includes(newRunId)) {
+                b.runIds.push(newRunId);
+              }
+            }
+          }
+          if (status === "running" && newRunId) {
+            watchBootCompletion(id, newRunId);
+          }
+        },
+      });
+      bootViewHandle.mount();
     }
   }
 
@@ -213,6 +295,104 @@ export async function ralphTui(opts: { serverUrl: string }) {
         boardHandle?.refresh();
       } else if (state.view === "runs-view" && state.activeJobId === jobId) {
         runsViewHandle?.refresh();
+      }
+    }
+  }
+
+  async function runBoot(bootId: string) {
+    const boot = getBoot(state, bootId);
+    if (!boot || boot.status === "running") return;
+
+    boot.status = "running";
+    bootBoardHandle?.refresh();
+
+    try {
+      const id = await client.submitPrompt(boot.prompt, boot.id);
+      boot.runId = id;
+      if (!boot.runIds.includes(id)) {
+        boot.runIds.push(id);
+      }
+      bootBoardHandle?.refresh();
+
+      // If the user already navigated to this boot's view, tell it to start streaming
+      if (state.view === "boot-view" && state.activeBootId === bootId) {
+        bootViewHandle?.startStreaming(id);
+      }
+
+      // Start a lightweight SSE watcher to update status on completion
+      watchBootCompletion(bootId, id);
+    } catch (err) {
+      boot.status = "error";
+      bootBoardHandle?.refresh();
+    }
+  }
+
+  function watchBootCompletion(bootId: string, runId: string) {
+    bgWatchers.get(`boot:${bootId}`)?.abort();
+    const controller = new AbortController();
+    bgWatchers.set(`boot:${bootId}`, { abort: () => controller.abort() });
+
+    (async () => {
+      try {
+        const res = await fetch(`${opts.serverUrl}/events?runId=${runId}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) {
+          updateBootStatus(bootId, "error");
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+
+          const frames = sseBuffer.split("\n\n");
+          sseBuffer = frames.pop()!;
+
+          for (const frame of frames) {
+            for (const line of frame.split("\n")) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const event: RalphEvent = JSON.parse(line.slice(6));
+                  if (event.type === "ralph.completed") {
+                    updateBootStatus(bootId, "completed");
+                    return;
+                  }
+                  if (event.type === "ralph.error") {
+                    updateBootStatus(bootId, "error");
+                    return;
+                  }
+                  if (event.type === "ralph.interrupted") {
+                    updateBootStatus(bootId, "interrupted");
+                    return;
+                  }
+                } catch {}
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return;
+        updateBootStatus(bootId, "error");
+      } finally {
+        bgWatchers.delete(`boot:${bootId}`);
+      }
+    })();
+  }
+
+  function updateBootStatus(bootId: string, status: "completed" | "error" | "interrupted") {
+    const boot = getBoot(state, bootId);
+    if (boot) {
+      boot.status = status;
+      if (state.view === "boot-board") {
+        bootBoardHandle?.refresh();
+      } else if (state.view === "boot-runs-view" && state.activeBootId === bootId) {
+        bootRunsViewHandle?.refresh();
       }
     }
   }

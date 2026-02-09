@@ -12,20 +12,20 @@ import { SpinnerRenderable } from "opentui-spinner";
 import { type AppState, type Job } from "./state";
 import type { RalphClient } from "./client";
 
-export interface JobBoardCallbacks {
-  onViewJob: (jobId: string) => void;
-  onRunJob: (jobId: string) => void;
+export interface BootBoardCallbacks {
+  onViewBoot: (bootId: string) => void;
+  onRunBoot: (bootId: string) => void;
   onQuit: () => void;
-  onSwitchToBoots: () => void;
+  onSwitchToJobs: () => void;
 }
 
-export interface JobBoardHandle {
+export interface BootBoardHandle {
   mount: () => void;
   unmount: () => void;
   refresh: () => void;
 }
 
-const SPINNER_FRAMES = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 const STATUS_ICONS: Record<Job["status"], string> = {
   draft: "[ ]",
@@ -35,17 +35,17 @@ const STATUS_ICONS: Record<Job["status"], string> = {
   interrupted: "[~]",
 };
 
-const LIST_HELP = "[n] new  [e] edit  [r] run  [s] stop  [d] delete  [Enter] view  [b] boot  [Esc] quit";
+const LIST_HELP = "[n] new  [e] edit  [r] run  [s] stop  [d] delete  [Enter] view  [j] jobs  [Esc] quit";
 const EDITOR_HELP = "[Ctrl+S] save  [Esc] cancel";
 
-export function createJobBoard(
+export function createBootBoard(
   renderer: CliRenderer,
   state: AppState,
   client: RalphClient,
-  callbacks: JobBoardCallbacks,
-): JobBoardHandle {
+  callbacks: BootBoardCallbacks,
+): BootBoardHandle {
   const root = new BoxRenderable(renderer, {
-    id: "board-root",
+    id: "boot-board-root",
     flexDirection: "column",
     width: "100%",
     height: "100%",
@@ -53,43 +53,43 @@ export function createJobBoard(
 
   // Header
   const header = new BoxRenderable(renderer, {
-    id: "board-header",
+    id: "boot-board-header",
     height: 3,
     border: true,
     borderStyle: "rounded",
     flexDirection: "row",
-    title: " nightshift - Job Board ",
+    title: " nightshift - BOOT PROMPTS",
   });
   const spinner = new SpinnerRenderable(renderer, {
     autoplay: false,
   });
   header.add(spinner);
 
-  // Job list (wrapped in a box for border)
+  // Boot list (wrapped in a box for border)
   const listBox = new BoxRenderable(renderer, {
-    id: "board-list-box",
+    id: "boot-board-list-box",
     flexGrow: 1,
     border: true,
     borderStyle: "rounded",
   });
-  const jobList = new SelectRenderable(renderer, {
-    id: "board-list",
+  const bootList = new SelectRenderable(renderer, {
+    id: "boot-board-list",
     flexGrow: 1,
     options: [],
     showDescription: true,
   });
-  listBox.add(jobList);
+  listBox.add(bootList);
 
   // Editor area (hidden by default, wrapped in a box for border)
   const editorBox = new BoxRenderable(renderer, {
-    id: "board-editor-box",
+    id: "boot-board-editor-box",
     flexGrow: 1,
     border: true,
     borderStyle: "rounded",
     title: " editor ",
   });
   const editor = new TextareaRenderable(renderer, {
-    id: "board-editor",
+    id: "boot-board-editor",
     flexGrow: 1,
     placeholder: "Type your prompt here...",
   });
@@ -97,13 +97,13 @@ export function createJobBoard(
 
   // Footer
   const footer = new BoxRenderable(renderer, {
-    id: "board-footer",
+    id: "boot-board-footer",
     height: 3,
     border: true,
     borderStyle: "rounded",
   });
   const helpText = new TextRenderable(renderer, {
-    id: "board-help",
+    id: "boot-board-help",
     content: LIST_HELP,
   });
   footer.add(helpText);
@@ -122,10 +122,10 @@ export function createJobBoard(
   }
 
   function deriveOptions() {
-    return state.jobs.map((job) => ({
-      name: `${statusIcon(job.status)} ${job.prompt.length > 60 ? job.prompt.slice(0, 60) + "..." : job.prompt}`,
-      description: `Created ${new Date(job.createdAt).toLocaleTimeString()}`,
-      value: job.id,
+    return state.boots.map((boot) => ({
+      name: `${statusIcon(boot.status)} ${boot.prompt.length > 60 ? boot.prompt.slice(0, 60) + "..." : boot.prompt}`,
+      description: `Created ${new Date(boot.createdAt).toLocaleTimeString()}`,
+      value: boot.id,
     }));
   }
 
@@ -133,7 +133,7 @@ export function createJobBoard(
     if (spinnerInterval) return;
     spinnerInterval = setInterval(() => {
       spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
-      jobList.options = deriveOptions();
+      bootList.options = deriveOptions();
     }, 80);
   }
 
@@ -144,9 +144,9 @@ export function createJobBoard(
   }
 
   function refresh() {
-    jobList.options = deriveOptions();
+    bootList.options = deriveOptions();
 
-    const hasRunning = state.jobs.some((j) => j.status === "running");
+    const hasRunning = state.boots.some((j) => j.status === "running");
     if (hasRunning) {
       spinner.start();
       startSpinnerTimer();
@@ -155,29 +155,29 @@ export function createJobBoard(
       stopSpinnerTimer();
     }
 
-    if (state.boardFocus === "list") {
+    if (state.bootBoardFocus === "list") {
       helpText.content = LIST_HELP;
     } else {
       helpText.content = EDITOR_HELP;
     }
   }
 
-  function showEditor(jobId: string | null) {
-    state.boardFocus = "editor";
-    state.editingJobId = jobId;
+  function showEditor(bootId: string | null) {
+    state.bootBoardFocus = "editor";
+    state.editingBootId = bootId;
 
     // Swap list for editor
-    root.remove("board-list-box");
-    root.remove("board-footer");
+    root.remove("boot-board-list-box");
+    root.remove("boot-board-footer");
     root.add(editorBox);
     root.add(footer);
 
     // Defer focus to next tick so the triggering keypress (n/e)
     // doesn't propagate into the textarea
     setTimeout(() => {
-      if (jobId) {
-        const job = state.jobs.find((j) => j.id === jobId);
-        if (job) editor.setText(job.prompt);
+      if (bootId) {
+        const boot = state.boots.find((j) => j.id === bootId);
+        if (boot) editor.setText(boot.prompt);
       } else {
         editor.setText("");
       }
@@ -188,15 +188,15 @@ export function createJobBoard(
   }
 
   function hideEditor() {
-    state.boardFocus = "list";
-    state.editingJobId = null;
+    state.bootBoardFocus = "list";
+    state.editingBootId = null;
 
-    root.remove("board-editor-box");
-    root.remove("board-footer");
+    root.remove("boot-board-editor-box");
+    root.remove("boot-board-footer");
     root.add(listBox);
     root.add(footer);
 
-    jobList.focus();
+    bootList.focus();
     refresh();
   }
 
@@ -207,30 +207,30 @@ export function createJobBoard(
       return;
     }
 
-    if (state.editingJobId) {
-      // Update existing job
-      const job = state.jobs.find((j) => j.id === state.editingJobId);
-      if (job) {
-        job.prompt = text;
-        await client.updateJob(job.id, { prompt: text });
+    if (state.editingBootId) {
+      // Update existing boot
+      const boot = state.boots.find((j) => j.id === state.editingBootId);
+      if (boot) {
+        boot.prompt = text;
+        await client.updateJob(boot.id, { prompt: text });
       }
     } else {
-      // Create new job via server
-      const job = await client.createJob(text);
-      state.jobs.push(job);
+      // Create new boot via server
+      const boot = await client.createJob(text);
+      state.boots.push(boot);
     }
 
     hideEditor();
   }
 
-  let confirmAction: { type: "delete"; jobId: string } | { type: "stop"; jobId: string } | { type: "quit" } | null = null;
+  let confirmAction: { type: "delete"; bootId: string } | { type: "stop"; bootId: string } | { type: "quit" } | null = null;
 
   function showConfirm(action: typeof confirmAction) {
     confirmAction = action;
     if (action?.type === "delete" || action?.type === "stop") {
-      const job = state.jobs.find((j) => j.id === action.jobId);
-      if (!job) { confirmAction = null; return; }
-      const preview = job.prompt.length > 40 ? job.prompt.slice(0, 40) + "..." : job.prompt;
+      const boot = state.boots.find((j) => j.id === action.bootId);
+      if (!boot) { confirmAction = null; return; }
+      const preview = boot.prompt.length > 40 ? boot.prompt.slice(0, 40) + "..." : boot.prompt;
       const verb = action.type === "delete" ? "Delete" : "Stop";
       helpText.content = t`${red(bold(verb))} ${dim(`"${preview}"`)}? ${bold("y")}/${bold("n")}`;
     } else if (action?.type === "quit") {
@@ -243,8 +243,8 @@ export function createJobBoard(
     helpText.content = LIST_HELP;
   }
 
-  function getSelectedJobId(): string | null {
-    const opt = jobList.getSelectedOption();
+  function getSelectedBootId(): string | null {
+    const opt = bootList.getSelectedOption();
     return opt?.value ?? null;
   }
 
@@ -253,17 +253,17 @@ export function createJobBoard(
     if (confirmAction) {
       if (key.name === "y") {
         if (confirmAction.type === "delete") {
-          const id = confirmAction.jobId;
+          const id = confirmAction.bootId;
           client.deleteJob(id);
-          state.jobs = state.jobs.filter((j) => j.id !== id);
+          state.boots = state.boots.filter((j) => j.id !== id);
           hideConfirm();
           refresh();
         } else if (confirmAction.type === "stop") {
-          const id = confirmAction.jobId;
-          const job = state.jobs.find((j) => j.id === id);
-          if (job && job.runId) {
-            client.interruptRun(job.runId, "user_stop");
-            job.status = "interrupted";
+          const id = confirmAction.bootId;
+          const boot = state.boots.find((j) => j.id === id);
+          if (boot && boot.runId) {
+            client.interruptRun(boot.runId, "user_stop");
+            boot.status = "interrupted";
           }
           hideConfirm();
           refresh();
@@ -277,7 +277,7 @@ export function createJobBoard(
       return;
     }
 
-    if (state.boardFocus === "editor") {
+    if (state.bootBoardFocus === "editor") {
       // Ctrl+S to save
       if (key.name === "s" && key.ctrl) {
         saveEditor();
@@ -296,8 +296,8 @@ export function createJobBoard(
     }
 
     // List mode keybindings
-    if (key.name === "b") {
-      callbacks.onSwitchToBoots();
+    if (key.name === "j") {
+      callbacks.onSwitchToJobs();
       return;
     }
 
@@ -307,30 +307,30 @@ export function createJobBoard(
     }
 
     if (key.name === "e") {
-      const id = getSelectedJobId();
+      const id = getSelectedBootId();
       if (id) showEditor(id);
       return;
     }
 
     if (key.name === "r") {
-      const id = getSelectedJobId();
-      if (id) callbacks.onRunJob(id);
+      const id = getSelectedBootId();
+      if (id) callbacks.onRunBoot(id);
       return;
     }
 
     if (key.name === "s") {
-      const id = getSelectedJobId();
+      const id = getSelectedBootId();
       if (!id) return;
-      const job = state.jobs.find((j) => j.id === id);
-      if (job && job.status === "running" && job.runId) {
-        showConfirm({ type: "stop", jobId: id });
+      const boot = state.boots.find((j) => j.id === id);
+      if (boot && boot.status === "running" && boot.runId) {
+        showConfirm({ type: "stop", bootId: id });
       }
       return;
     }
 
     if (key.name === "d") {
-      const id = getSelectedJobId();
-      if (id) showConfirm({ type: "delete", jobId: id });
+      const id = getSelectedBootId();
+      if (id) showConfirm({ type: "delete", bootId: id });
       return;
     }
 
@@ -341,23 +341,23 @@ export function createJobBoard(
   }
 
   function onItemSelected() {
-    const id = getSelectedJobId();
-    if (id) callbacks.onViewJob(id);
+    const id = getSelectedBootId();
+    if (id) callbacks.onViewBoot(id);
   }
 
   return {
     mount() {
       renderer.root.add(root);
-      jobList.focus();
+      bootList.focus();
       refresh();
       renderer.keyInput.on("keypress", onKeypress);
-      jobList.on(SelectRenderableEvents.ITEM_SELECTED, onItemSelected);
+      bootList.on(SelectRenderableEvents.ITEM_SELECTED, onItemSelected);
     },
     unmount() {
       stopSpinnerTimer();
       renderer.keyInput.removeListener("keypress", onKeypress);
-      jobList.removeListener(SelectRenderableEvents.ITEM_SELECTED, onItemSelected);
-      renderer.root.remove("board-root");
+      bootList.removeListener(SelectRenderableEvents.ITEM_SELECTED, onItemSelected);
+      renderer.root.remove("boot-board-root");
     },
     refresh,
   };
