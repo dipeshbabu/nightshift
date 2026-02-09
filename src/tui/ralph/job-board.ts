@@ -16,6 +16,7 @@ export interface JobBoardCallbacks {
   onViewJob: (jobId: string) => void;
   onRunJob: (jobId: string) => void;
   onQuit: () => void;
+  onCaffinate: () => void;
   onSwitchToBoots: () => void;
 }
 
@@ -35,7 +36,7 @@ const STATUS_ICONS: Record<Job["status"], string> = {
   interrupted: "[~]",
 };
 
-const LIST_HELP = "[n] new  [e] edit  [r] run  [s] stop  [d] delete  [Enter] view  [b] boot  [Esc] quit";
+const LIST_HELP = "[n] new  [e] edit  [r] run  [s] stop  [d] delete  [Enter] view  [b] boot  [c] caffinate  [Esc] quit";
 const EDITOR_HELP = "[Ctrl+S] save  [Esc] cancel";
 
 export function createJobBoard(
@@ -223,7 +224,7 @@ export function createJobBoard(
     hideEditor();
   }
 
-  let confirmAction: { type: "delete"; jobId: string } | { type: "stop"; jobId: string } | { type: "quit" } | null = null;
+  let confirmAction: { type: "delete"; jobId: string } | { type: "stop"; jobId: string } | { type: "quit" } | { type: "caffinate" } | null = null;
 
   function showConfirm(action: typeof confirmAction) {
     confirmAction = action;
@@ -235,6 +236,8 @@ export function createJobBoard(
       helpText.content = t`${red(bold(verb))} ${dim(`"${preview}"`)}? ${bold("y")}/${bold("n")}`;
     } else if (action?.type === "quit") {
       helpText.content = t`Are you sure you want to quit Nightshift? ${bold("y")}/${bold("n")}`;
+    } else if (action?.type === "caffinate") {
+      helpText.content = t`Caffinate? Jobs will keep running in the background. ${bold("y")}/${bold("n")}`;
     }
   }
 
@@ -270,6 +273,9 @@ export function createJobBoard(
         } else if (confirmAction.type === "quit") {
           hideConfirm();
           callbacks.onQuit();
+        } else if (confirmAction.type === "caffinate") {
+          hideConfirm();
+          callbacks.onCaffinate();
         }
       } else if (key.name === "n" || key.name === "escape") {
         hideConfirm();
@@ -331,6 +337,13 @@ export function createJobBoard(
     if (key.name === "d") {
       const id = getSelectedJobId();
       if (id) showConfirm({ type: "delete", jobId: id });
+      return;
+    }
+
+    if (key.name === "c") {
+      if (state.jobs.some((j) => j.status === "running")) {
+        showConfirm({ type: "caffinate" });
+      }
       return;
     }
 

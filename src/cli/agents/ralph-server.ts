@@ -20,6 +20,8 @@ interface RalphServerOptions {
   bus: EventBus;
   prefix: string;
   onPrompt: (prompt: string, runId: string) => Promise<void>;
+  /** Called when caffeinated auto-exit triggers. Defaults to process.exit(0). */
+  onCaffinateExit?: () => void;
 }
 
 const CORS_HEADERS = {
@@ -70,7 +72,7 @@ function listJobFiles(jobsDir: string): JobFile[] {
 }
 
 export function startRalphServer(opts: RalphServerOptions) {
-  const { port, bus, prefix, onPrompt } = opts;
+  const { port, bus, prefix, onPrompt, onCaffinateExit } = opts;
   const runsDir = join(prefix, "runs");
   const jobsDir = join(prefix, "jobs");
   mkdirSync(jobsDir, { recursive: true });
@@ -80,6 +82,23 @@ export function startRalphServer(opts: RalphServerOptions) {
 
   // Map runId -> jobId for auto-updating job status on terminal events
   const runIdToJobId = new Map<string, string>();
+
+  // Caffinate state: when true, daemon auto-exits once all jobs finish
+  let caffeinated = false;
+
+  function checkAutoExit() {
+    if (!caffeinated) return;
+    const jobs = listJobFiles(jobsDir);
+    const hasRunning = jobs.some((j) => j.status === "running");
+    if (!hasRunning) {
+      console.log("[ralph] All jobs finished, caffeinated daemon exiting.");
+      if (onCaffinateExit) {
+        onCaffinateExit();
+      } else {
+        process.exit(0);
+      }
+    }
+  }
 
   // Persist every event to disk as JSONL
   bus.subscribeAll((event: RalphEvent) => {
@@ -108,6 +127,9 @@ export function startRalphServer(opts: RalphServerOptions) {
         }
         runIdToJobId.delete(event.runId);
       }
+
+      // Check if daemon should auto-exit
+      checkAutoExit();
     }
   });
 
@@ -117,6 +139,27 @@ export function startRalphServer(opts: RalphServerOptions) {
     routes: {
       "/health": {
         GET: () => Response.json({ status: "ok" }, { headers: CORS_HEADERS }),
+      },
+
+      "/caffinate": {
+        POST: () => {
+          caffeinated = true;
+          console.log("[ralph] Caffeinated mode enabled — will auto-exit when all jobs complete.");
+          // Check immediately in case no jobs are running
+          checkAutoExit();
+          return Response.json({ ok: true }, { headers: CORS_HEADERS });
+        },
+        OPTIONS: () => new Response(null, { status: 204, headers: CORS_HEADERS }),
+      },
+
+      "/shutdown": {
+        POST: () => {
+          console.log("[ralph] Shutdown requested, exiting.");
+          // Respond before exiting
+          setTimeout(() => process.exit(0), 50);
+          return Response.json({ ok: true }, { headers: CORS_HEADERS });
+        },
+        OPTIONS: () => new Response(null, { status: 204, headers: CORS_HEADERS }),
       },
 
       // --- Job CRUD ---
@@ -359,6 +402,8 @@ export function startRalphServer(opts: RalphServerOptions) {
   console.log(`[ralph]   POST /runs/status         — batch run status`);
   console.log(`[ralph]   CRUD /jobs                — job persistence`);
   console.log(`[ralph]   GET  /health              — health check`);
+  console.log(`[ralph]   POST /caffinate           — enable auto-exit on idle`);
+  console.log(`[ralph]   POST /shutdown            — graceful shutdown`);
 
   return server;
 }

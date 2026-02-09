@@ -9,7 +9,9 @@ import { createBootRunsView, type BootRunsViewHandle } from "./boot-runs-view";
 import { createBootView, type BootViewHandle } from "./boot-view";
 import type { RalphEvent } from "../../cli/agents/events";
 
-export async function ralphTui(opts: { serverUrl: string }) {
+export type TuiExitResult = { action: "quit" } | { action: "caffinate" };
+
+export async function ralphTui(opts: { serverUrl: string }): Promise<TuiExitResult> {
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
   const state = createState();
   const client = new RalphClient(opts.serverUrl);
@@ -37,6 +39,18 @@ export async function ralphTui(opts: { serverUrl: string }) {
   // Lightweight SSE watchers for jobs running in the background (from the board)
   const bgWatchers = new Map<string, { abort: () => void }>();
 
+  // Deferred promise so ralphTui() returns when the user quits or caffinates
+  let resolveTui: (result: TuiExitResult) => void;
+  const tuiResult = new Promise<TuiExitResult>((resolve) => {
+    resolveTui = resolve;
+  });
+
+  function teardownUi() {
+    for (const w of bgWatchers.values()) w.abort();
+    bgWatchers.clear();
+    renderer.destroy();
+  }
+
   async function quit() {
     // Interrupt all running jobs and boots before exiting
     const running = state.jobs.filter((j) => j.status === "running" && j.runId);
@@ -46,9 +60,14 @@ export async function ralphTui(opts: { serverUrl: string }) {
       ...runningBoots.map((j) => client.interruptRun(j.runId!, "user_quit")),
     ]);
 
-    for (const w of bgWatchers.values()) w.abort();
-    bgWatchers.clear();
-    renderer.destroy();
+    teardownUi();
+    resolveTui({ action: "quit" });
+  }
+
+  function caffinate() {
+    // Tear down UI but do NOT interrupt running jobs
+    teardownUi();
+    resolveTui({ action: "caffinate" });
   }
 
   // Handle SIGINT for graceful quit
@@ -83,6 +102,9 @@ export async function ralphTui(opts: { serverUrl: string }) {
         },
         onQuit() {
           quit();
+        },
+        onCaffinate() {
+          caffinate();
         },
         onSwitchToBoots() {
           navigate("boot-board");
@@ -398,4 +420,6 @@ export async function ralphTui(opts: { serverUrl: string }) {
   }
 
   navigate("job-board");
+
+  return await tuiResult;
 }

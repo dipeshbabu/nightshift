@@ -237,15 +237,59 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
 
   // Serve mode: start HTTP server, prompt comes from POST requests
   if (options.serve) {
-    const { startRalphServer } = await import("../agents/ralph-server");
     const port = options.servePort ?? 3000;
+    const serverUrl = `http://localhost:${port}`;
 
+    if (options.useNightshiftTui) {
+      // Spawn the ralph server as a detached daemon process so the TUI can exit independently
+      const serverLogDir = join(prefix, "agent_logs");
+      mkdirSync(serverLogDir, { recursive: true });
+      const logPath = join(serverLogDir, "ralph-server.log");
+
+      const entryPath = join(import.meta.dir, "../agents/ralph-serve-entry.ts");
+      const daemonProc = Bun.spawn([
+        "bun", "run", entryPath,
+        "--prefix", prefix,
+        "--port", String(port),
+        "--workspace", workspacePath,
+        "--agent-model", agentModel,
+        "--eval-model", evalModel,
+      ], {
+        stdout: Bun.file(logPath),
+        stderr: Bun.file(logPath),
+        stdin: "ignore",
+      });
+      daemonProc.unref();
+
+      // Wait for the daemon server to be ready
+      await waitForRalphServer(serverUrl);
+
+      const { ralphTui } = await import("../../tui/ralph/index");
+      const result = await ralphTui({ serverUrl });
+
+      const { RalphClient } = await import("../../tui/ralph/client");
+      const client = new RalphClient(serverUrl);
+
+      if (result.action === "quit") {
+        await client.shutdown();
+        process.exit(0);
+      } else if (result.action === "caffinate") {
+        await client.caffinate();
+        await Bun.write(Bun.stdout, "Caffeinated! Jobs will continue running in the background.\n");
+        await Bun.write(Bun.stdout, `Server log: ${logPath}\n`);
+        process.exit(0);
+      }
+      process.exit(0);
+    }
+
+    // Non-TUI serve mode: run in-process
     const worktreesDir = join(prefix, "worktrees");
     mkdirSync(worktreesDir, { recursive: true });
 
     // Prune stale worktrees left behind by a previous crash
     await pruneStaleWorktrees(workspacePath, worktreesDir);
 
+    const { startRalphServer } = await import("../agents/ralph-server");
     startRalphServer({
       port,
       bus,
@@ -351,13 +395,8 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
       },
     });
 
-    if (options.useNightshiftTui) {
-      const { ralphTui } = await import("../../tui/ralph/index");
-      await ralphTui({ serverUrl: `http://localhost:${port}` });
-    } else {
-      // Keep process alive
-      await new Promise(() => { });
-    }
+    // Keep process alive
+    await new Promise(() => { });
     return;
   }
 
@@ -422,4 +461,15 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
   }
 
   process.exit(0);
+}
+
+async function waitForRalphServer(serverUrl: string, maxAttempts = 60): Promise<void> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await fetch(`${serverUrl}/health`, { signal: AbortSignal.timeout(2000) });
+      if (res.ok) return;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("Ralph server daemon failed to start within timeout");
 }

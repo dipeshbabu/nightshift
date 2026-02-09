@@ -56,4 +56,12 @@ export class RalphClient {
       body: JSON.stringify({ reason }),
     });
   }
+
+  async caffinate(): Promise<void> {
+    await fetch(`${this.serverUrl}/caffinate`, { method: "POST" });
+  }
+
+  async shutdown(): Promise<void> {
+    await fetch(`${this.serverUrl}/shutdown`, { method: "POST" }).catch(() => {});
+  }
 }
