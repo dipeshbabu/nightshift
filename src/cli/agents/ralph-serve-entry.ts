@@ -49,6 +49,15 @@ mkdirSync(worktreesDir, { recursive: true });
 
 const bus = createBus();
 
+// Track active agent server handles so we can kill them on shutdown
+const activeHandles = new Set<{ kill: () => void }>();
+
+process.on("exit", () => {
+  for (const handle of activeHandles) {
+    try { handle.kill(); } catch {}
+  }
+});
+
 // Prune stale worktrees left behind by a previous crash
 await pruneStaleWorktrees(workspace, worktreesDir);
 
@@ -80,6 +89,9 @@ startRalphServer({
       startAgentServer({ prefix, workspace: worktreePath, name: `nightshift-boss-${shortId}`, bus: publisher }),
       startAgentServer({ prefix, workspace: worktreePath, name: `nightshift-worker-${shortId}`, bus: publisher }),
     ]);
+
+    activeHandles.add(bossHandle);
+    activeHandles.add(workerHandle);
 
     try {
       const result = await runAgentLoop({
@@ -145,6 +157,8 @@ startRalphServer({
         done: result.done,
       });
     } finally {
+      activeHandles.delete(bossHandle);
+      activeHandles.delete(workerHandle);
       bossHandle.kill();
       workerHandle.kill();
       await removeWorktree({ repoPath: workspace, worktreePath, branchName });
