@@ -62,6 +62,14 @@ export function formatEvent(event: RalphEvent): string | null {
     }
     case "session.permission":
       return `[Auto-approving ${event.permission}${event.description ? `: ${event.description}` : ""}]`;
+    case "worktree.created":
+      return `[ralph] Created worktree: ${event.branchName} → ${event.worktreePath}`;
+    case "worktree.merged":
+      return `[ralph] Merged ${event.branchName} into main`;
+    case "worktree.merge_conflict":
+      return `[ralph] Merge conflict on ${event.branchName}:\n${event.conflicts}`;
+    case "worktree.removed":
+      return `[ralph] Removed worktree: ${event.branchName}`;
     default:
       return null;
   }

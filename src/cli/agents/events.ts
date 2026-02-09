@@ -109,6 +109,28 @@ export interface RalphInterruptedEvent extends BaseEvent {
   reason: "user_quit" | "user_stop";
 }
 
+export interface WorktreeCreatedEvent extends BaseEvent {
+  type: "worktree.created";
+  branchName: string;
+  worktreePath: string;
+}
+
+export interface WorktreeMergedEvent extends BaseEvent {
+  type: "worktree.merged";
+  branchName: string;
+}
+
+export interface WorktreeMergeConflictEvent extends BaseEvent {
+  type: "worktree.merge_conflict";
+  branchName: string;
+  conflicts: string;
+}
+
+export interface WorktreeRemovedEvent extends BaseEvent {
+  type: "worktree.removed";
+  branchName: string;
+}
+
 export type RalphEvent =
   | RalphStartedEvent
   | RalphCompletedEvent
@@ -126,6 +148,10 @@ export type RalphEvent =
   | BossCompleteEvent
   | SessionTextDeltaEvent
   | SessionToolStatusEvent
-  | SessionPermissionEvent;
+  | SessionPermissionEvent
+  | WorktreeCreatedEvent
+  | WorktreeMergedEvent
+  | WorktreeMergeConflictEvent
+  | WorktreeRemovedEvent;
 
 export type RalphEventType = RalphEvent["type"];

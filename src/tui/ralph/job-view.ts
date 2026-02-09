@@ -61,6 +61,7 @@ export function createJobView(
     borderStyle: "rounded",
     title: " nightshift ",
     stickyScroll: true,
+    stickyStart: "bottom",
   });
 
   const inputBar = new BoxRenderable(renderer, {

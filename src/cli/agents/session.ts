@@ -6,7 +6,7 @@ export interface SessionOptions {
   prompt: string;
   title: string;
   model: string; // "provider/model" format
-  phase?: "executor" | "validator";
+  phase?: "executor" | "validator" | "resolver";
   logPath?: string;
   timeoutMs?: number; // default 30min
   onText?: (text: string) => void;

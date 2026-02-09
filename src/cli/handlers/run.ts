@@ -7,6 +7,8 @@ import { buildSandboxCommand, type SandboxOptions } from "../../lib/sandbox";
 import { startAgentServer } from "../agents/server";
 import { runAgentLoop } from "../agents/loop";
 import { createBus, taggedPublisher } from "../agents/bus";
+import { createWorktree, mergeMainIntoWorktree, mergeWorktreeIntoMain, removeWorktree } from "../agents/worktree";
+import { resolve as resolveConflicts } from "../agents/resolver";
 import type { RalphEvent } from "../agents/events";
 
 export function extractExtraArgs(argv: string[]): string[] {
@@ -270,6 +272,14 @@ function formatEventForCli(event: RalphEvent): string | null {
     }
     case "session.permission":
       return `[Auto-approving ${event.permission}${event.description ? `: ${event.description}` : ""}]`;
+    case "worktree.created":
+      return `[ralph] Created worktree: ${event.branchName} → ${event.worktreePath}`;
+    case "worktree.merged":
+      return `[ralph] Merged ${event.branchName} into main`;
+    case "worktree.merge_conflict":
+      return `[ralph] Merge conflict on ${event.branchName}:\n${event.conflicts}`;
+    case "worktree.removed":
+      return `[ralph] Removed worktree: ${event.branchName}`;
     default:
       return null;
   }
@@ -287,30 +297,90 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
     const { startRalphServer } = await import("../agents/ralph-server");
     const port = options.servePort ?? 3000;
 
+    const worktreesDir = join(prefix, "worktrees");
+    mkdirSync(worktreesDir, { recursive: true });
+
     startRalphServer({
       port,
       bus,
       prefix,
       onPrompt: async (prompt: string, runId: string) => {
         const publisher = taggedPublisher(bus, runId);
+        const shortId = runId.slice(0, 8);
+        const branchName = `task/${shortId}`;
 
-        // Start fresh agent servers per prompt run
+        // Create an isolated worktree for this task
+        const worktreePath = await createWorktree({
+          repoPath: workspacePath,
+          worktreesDir,
+          branchName,
+        });
+
+        publisher.publish({
+          type: "worktree.created",
+          timestamp: Date.now(),
+          branchName,
+          worktreePath,
+        });
+
+        // Start fresh agent servers scoped to the worktree
         const [bossHandle, workerHandle] = await Promise.all([
-          startAgentServer({ prefix, workspace: workspacePath, name: `nightshift-boss-${Date.now()}`, bus: publisher }),
-          startAgentServer({ prefix, workspace: workspacePath, name: `nightshift-worker-${Date.now()}`, bus: publisher }),
+          startAgentServer({ prefix, workspace: worktreePath, name: `nightshift-boss-${shortId}`, bus: publisher }),
+          startAgentServer({ prefix, workspace: worktreePath, name: `nightshift-worker-${shortId}`, bus: publisher }),
         ]);
 
         try {
           const result = await runAgentLoop({
             workerClient: workerHandle.client,
             bossClient: bossHandle.client,
-            workspace: workspacePath,
+            workspace: worktreePath,
             prompt,
             agentModel,
             evalModel,
             logDir,
             bus: publisher,
           });
+
+          if (result.done) {
+            // Integrate task branch with main
+            let merge = await mergeMainIntoWorktree(worktreePath);
+            let retries = 0;
+
+            while (!merge.clean && retries < 3) {
+              publisher.publish({
+                type: "worktree.merge_conflict",
+                timestamp: Date.now(),
+                branchName,
+                conflicts: merge.conflicts ?? "",
+              });
+
+              await resolveConflicts({
+                client: workerHandle.client,
+                worktreePath,
+                conflicts: merge.conflicts ?? "",
+                model: agentModel,
+                bus: publisher,
+              });
+
+              merge = await mergeMainIntoWorktree(worktreePath);
+              retries++;
+            }
+
+            if (merge.clean) {
+              await mergeWorktreeIntoMain(workspacePath, branchName);
+              publisher.publish({
+                type: "worktree.merged",
+                timestamp: Date.now(),
+                branchName,
+              });
+            } else {
+              publisher.publish({
+                type: "ralph.error",
+                timestamp: Date.now(),
+                error: `Could not resolve merge conflicts after ${retries} retries`,
+              });
+            }
+          }
 
           publisher.publish({
             type: "ralph.completed",
@@ -321,6 +391,12 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
         } finally {
           bossHandle.kill();
           workerHandle.kill();
+          await removeWorktree({ repoPath: workspacePath, worktreePath, branchName });
+          publisher.publish({
+            type: "worktree.removed",
+            timestamp: Date.now(),
+            branchName,
+          });
         }
       },
     });
