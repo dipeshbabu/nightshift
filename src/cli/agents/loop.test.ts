@@ -13,11 +13,11 @@ const mockValidate = mock(() => Promise.resolve({
 }));
 
 // Override module imports
-mock.module("./executor", () => ({
+mock.module("./worker", () => ({
   execute: mockExecute,
 }));
 
-mock.module("./validator", () => ({
+mock.module("./boss", () => ({
   validate: mockValidate,
 }));
 
@@ -34,8 +34,8 @@ test("loop exits on first iteration when validator returns done: true", async ()
   });
 
   const result = await runAgentLoop({
-    executorClient: fakeClient,
-    validatorClient: fakeClient,
+    workerClient: fakeClient,
+    bossClient: fakeClient,
     workspace: "/tmp/test",
     prompt: "Fix the bug",
     agentModel: "openai/gpt-5.2-codex",
@@ -69,8 +69,8 @@ test("loop carries forward outputs when validator returns done: false", async ()
     });
 
   const result = await runAgentLoop({
-    executorClient: fakeClient,
-    validatorClient: fakeClient,
+    workerClient: fakeClient,
+    bossClient: fakeClient,
     workspace: "/tmp/test",
     prompt: "Add tests",
     agentModel: "openai/gpt-5.2-codex",
@@ -93,8 +93,8 @@ test("loop respects maxIterations", async () => {
   });
 
   const result = await runAgentLoop({
-    executorClient: fakeClient,
-    validatorClient: fakeClient,
+    workerClient: fakeClient,
+    bossClient: fakeClient,
     workspace: "/tmp/test",
     prompt: "Impossible task",
     agentModel: "openai/gpt-5.2-codex",
