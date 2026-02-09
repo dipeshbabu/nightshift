@@ -1,5 +1,5 @@
 import { resolve, join } from "path";
-import { mkdirSync, existsSync } from "fs";
+import { mkdirSync, existsSync, unlinkSync } from "fs";
 import { checkSandboxAvailability } from "../../lib/platform";
 import { readFullConfig, expandHome } from "../../lib/config";
 import { buildXdgEnv, buildUvEnv } from "../../lib/env";
@@ -63,6 +63,50 @@ export interface RalphOptions {
   useNightshiftTui: boolean;
   serve?: boolean;
   servePort?: number;
+}
+
+// --- Ralph daemon PID file helpers (mirrors pattern from server.ts) ---
+
+function ralphPidPath(prefix: string): string {
+  return join(prefix, "run", "ralph-server.json");
+}
+
+async function readRalphPid(prefix: string): Promise<{ pid: number; port: number } | null> {
+  try {
+    const file = Bun.file(ralphPidPath(prefix));
+    if (!(await file.exists())) return null;
+    return JSON.parse(await file.text());
+  } catch {
+    return null;
+  }
+}
+
+function writeRalphPid(prefix: string, pid: number, port: number): void {
+  const dir = join(prefix, "run");
+  mkdirSync(dir, { recursive: true });
+  Bun.write(ralphPidPath(prefix), JSON.stringify({ pid, port }));
+}
+
+function removeRalphPid(prefix: string): void {
+  try { unlinkSync(ralphPidPath(prefix)); } catch {}
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isRalphServerHealthy(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function run(prefix: string, args: string[], useNightshiftTui: boolean, sandboxEnabled: boolean, ralphOptions?: RalphOptions): Promise<void> {
@@ -238,31 +282,55 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
   // Serve mode: start HTTP server, prompt comes from POST requests
   if (options.serve) {
     const port = options.servePort ?? 3000;
-    const serverUrl = `http://localhost:${port}`;
+    let serverUrl = `http://localhost:${port}`;
 
     if (options.useNightshiftTui) {
-      // Spawn the ralph server as a detached daemon process so the TUI can exit independently
       const serverLogDir = join(prefix, "agent_logs");
       mkdirSync(serverLogDir, { recursive: true });
       const logPath = join(serverLogDir, "ralph-server.log");
 
-      const entryPath = join(import.meta.dir, "../agents/ralph-serve-entry.ts");
-      const daemonProc = Bun.spawn([
-        "bun", "run", entryPath,
-        "--prefix", prefix,
-        "--port", String(port),
-        "--workspace", workspacePath,
-        "--agent-model", agentModel,
-        "--eval-model", evalModel,
-      ], {
-        stdout: Bun.file(logPath),
-        stderr: Bun.file(logPath),
-        stdin: "ignore",
-      });
-      daemonProc.unref();
+      // Check if an existing ralph daemon is still alive
+      let reused = false;
+      const existing = await readRalphPid(prefix);
+      if (existing && isProcessAlive(existing.pid)) {
+        const existingUrl = `http://localhost:${existing.port}`;
+        if (await isRalphServerHealthy(existingUrl)) {
+          // Reuse the existing daemon
+          serverUrl = existingUrl;
+          reused = true;
+        } else {
+          // Stale — process alive but unhealthy, clean up
+          try { process.kill(existing.pid); } catch {}
+          removeRalphPid(prefix);
+        }
+      } else if (existing) {
+        // PID file exists but process is dead
+        removeRalphPid(prefix);
+      }
 
-      // Wait for the daemon server to be ready
-      await waitForRalphServer(serverUrl);
+      if (!reused) {
+        // Spawn the ralph server as a detached daemon process
+        const entryPath = join(import.meta.dir, "../agents/ralph-serve-entry.ts");
+        const daemonProc = Bun.spawn([
+          "bun", "run", entryPath,
+          "--prefix", prefix,
+          "--port", String(port),
+          "--workspace", workspacePath,
+          "--agent-model", agentModel,
+          "--eval-model", evalModel,
+        ], {
+          stdout: Bun.file(logPath),
+          stderr: Bun.file(logPath),
+          stdin: "ignore",
+        });
+        daemonProc.unref();
+
+        // Wait for the daemon server to be ready
+        await waitForRalphServer(serverUrl);
+
+        // Write PID file so future restarts can reconnect
+        writeRalphPid(prefix, daemonProc.pid, port);
+      }
 
       const { ralphTui } = await import("../../tui/ralph/index");
       const result = await ralphTui({ serverUrl });
@@ -272,11 +340,13 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
 
       if (result.action === "quit") {
         await client.shutdown();
+        removeRalphPid(prefix);
         process.exit(0);
       } else if (result.action === "caffinate") {
         await client.caffinate();
         await Bun.write(Bun.stdout, "Caffeinated! Jobs will continue running in the background.\n");
         await Bun.write(Bun.stdout, `Server log: ${logPath}\n`);
+        // Leave PID file in place so next restart reconnects
         process.exit(0);
       }
       process.exit(0);

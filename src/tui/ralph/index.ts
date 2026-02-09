@@ -20,11 +20,21 @@ export async function ralphTui(opts: { serverUrl: string }): Promise<TuiExitResu
   try {
     const jobs = await client.listJobs();
     state.jobs = jobs;
-    // Mark any jobs still "running" from a previous session as interrupted
-    for (const job of state.jobs) {
-      if (job.status === "running") {
-        job.status = "interrupted";
-        await client.updateJob(job.id, { status: "interrupted" });
+
+    // Check which "running" jobs are genuinely still running on the daemon
+    const runningJobs = state.jobs.filter((j) => j.status === "running" && j.runId);
+    if (runningJobs.length > 0) {
+      const runIds = runningJobs.map((j) => j.runId!);
+      const statuses = await client.getRunStatuses(runIds);
+      for (const job of runningJobs) {
+        const actual = statuses[job.runId!];
+        if (actual === "running") {
+          // Genuinely still running — leave it alone, start a watcher after navigate
+        } else {
+          // Daemon doesn't know about it or it's finished — mark interrupted
+          job.status = "interrupted";
+          await client.updateJob(job.id, { status: "interrupted" });
+        }
       }
     }
   } catch {}
@@ -56,8 +66,8 @@ export async function ralphTui(opts: { serverUrl: string }): Promise<TuiExitResu
     const running = state.jobs.filter((j) => j.status === "running" && j.runId);
     const runningBoots = state.boots.filter((j) => j.status === "running" && j.runId);
     await Promise.all([
-      ...running.map((j) => client.interruptRun(j.runId!, "user_quit")),
-      ...runningBoots.map((j) => client.interruptRun(j.runId!, "user_quit")),
+      ...running.map((j) => client.interruptRun(j.runId!, "user_quit").catch(() => {})),
+      ...runningBoots.map((j) => client.interruptRun(j.runId!, "user_quit").catch(() => {})),
     ]);
 
     teardownUi();
@@ -416,6 +426,13 @@ export async function ralphTui(opts: { serverUrl: string }): Promise<TuiExitResu
       } else if (state.view === "boot-runs-view" && state.activeBootId === bootId) {
         bootRunsViewHandle?.refresh();
       }
+    }
+  }
+
+  // Start SSE watchers for jobs that are genuinely still running on the daemon
+  for (const job of state.jobs) {
+    if (job.status === "running" && job.runId) {
+      watchJobCompletion(job.id, job.runId);
     }
   }
 
