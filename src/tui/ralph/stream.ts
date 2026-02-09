@@ -55,7 +55,21 @@ export function renderEvent(event: RalphEvent, buf: OutputBuffer) {
 
   buf.flush();
 
+  // Render bash input command with CodeRenderable
+  if (event.type === "session.tool.status" && event.status === "running") {
+    if (event.tool === "bash" && event.input) {
+      const command = (event.input as any)?.command as string | undefined;
+      if (command) {
+        const title = event.detail || event.tool;
+        buf.appendLine(`\n▶ ${title}`);
+        buf.appendCode(command, "bash", "#c4a7e7");
+        return;
+      }
+    }
+  }
+
   // Render apply_patch / edit diffs with the DiffRenderable
+  // Render bash output with the CodeRenderable
   if (event.type === "session.tool.status" && event.status === "completed") {
     const diff = event.metadata?.diff as string | undefined;
     if ((event.tool === "apply_patch" || event.tool === "edit") && diff) {
@@ -66,6 +80,25 @@ export function renderEvent(event: RalphEvent, buf: OutputBuffer) {
       buf.appendLine(header);
       const filetype = inferFiletype(event.tool, event.input, event.metadata);
       buf.appendDiff(diff, filetype);
+      return;
+    }
+    if (event.tool === "bash" && event.output) {
+      const title = event.detail || event.tool;
+      const duration = event.duration;
+      let header = `✓ ${title}`;
+      if (duration !== undefined) header += ` (${duration.toFixed(1)}s)`;
+      buf.appendLine(header);
+      buf.appendCode(event.output, "bash", "#e6c479");
+      return;
+    }
+    if (event.tool === "read" && event.output) {
+      const title = event.detail || event.tool;
+      const duration = event.duration;
+      let header = `✓ ${title}`;
+      if (duration !== undefined) header += ` (${duration.toFixed(1)}s)`;
+      buf.appendLine(header);
+      const filetype = inferFiletype(event.tool, event.input);
+      buf.appendCode(event.output, filetype, "#7ec8c8");
       return;
     }
   }

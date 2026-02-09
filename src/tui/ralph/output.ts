@@ -1,4 +1,6 @@
-import { TextRenderable, DiffRenderable, type ScrollBoxRenderable, type CliRenderer, type Renderable } from "@opentui/core";
+import { TextRenderable, DiffRenderable, CodeRenderable, SyntaxStyle, type ScrollBoxRenderable, type CliRenderer, type Renderable } from "@opentui/core";
+
+const syntaxStyle = SyntaxStyle.create();
 
 export class OutputBuffer {
   private lineCount = 0;
@@ -36,6 +38,18 @@ export class OutputBuffer {
       width: "100%",
     });
     this.output.add(diffView);
+  }
+
+  appendCode(code: string, filetype?: string, fg?: string) {
+    const codeView = new CodeRenderable(this.renderer, {
+      id: `code-${this.lineCount++}`,
+      content: code,
+      filetype,
+      syntaxStyle,
+      fg,
+      width: "100%",
+    });
+    this.output.add(codeView);
   }
 
   appendRenderable(renderable: Renderable) {
