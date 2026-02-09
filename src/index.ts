@@ -13,6 +13,15 @@ function installCompleteMessage() {
 
 if (import.meta.main) {
   const rawArgs = process.argv.slice(2);
+
+  // Hidden subcommand: the compiled binary spawns itself with _ralph-daemon
+  // to run the ralph server as a detached daemon process.
+  if (rawArgs[0] === "_ralph-daemon") {
+    const { runRalphDaemon } = await import("./cli/agents/ralph-serve-entry");
+    await runRalphDaemon(process.argv);
+    await new Promise(() => {});
+  }
+
   // Strip "serve" positional so yargs strict mode doesn't reject it
   // (serve mode is detected separately from process.argv)
   const args = rawArgs.filter((a) => a !== "serve");

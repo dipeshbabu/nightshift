@@ -65,6 +65,21 @@ export interface RalphOptions {
   servePort?: number;
 }
 
+// --- Self-spawn helper for compiled binary compatibility ---
+
+/** Build the command to re-invoke the current process (works in both dev and compiled mode). */
+function getSelfCommand(): string[] {
+  const scriptArg = process.argv[1];
+  // In dev mode (bun run script.ts), argv[1] is the .ts source file.
+  // In compiled binaries, Bun injects a virtual /$bunfs/root/...index.js path
+  // which we must NOT include — Bun re-adds it automatically in the child.
+  if (scriptArg && scriptArg.endsWith(".ts")) {
+    return [process.execPath, scriptArg];
+  }
+  // Compiled binary — process.execPath IS the binary
+  return [process.execPath];
+}
+
 // --- Ralph daemon PID file helpers (mirrors pattern from server.ts) ---
 
 function ralphPidPath(prefix: string): string {
@@ -309,10 +324,12 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
       }
 
       if (!reused) {
-        // Spawn the ralph server as a detached daemon process
-        const entryPath = join(import.meta.dir, "../agents/ralph-serve-entry.ts");
+        // Spawn the ralph server as a detached daemon process.
+        // We re-invoke ourselves with the hidden _ralph-daemon subcommand
+        // so this works in both dev mode (bun run src/index.ts) and compiled binaries.
+        const selfCmd = getSelfCommand();
         const daemonProc = Bun.spawn([
-          "bun", "run", entryPath,
+          ...selfCmd, "_ralph-daemon",
           "--prefix", prefix,
           "--port", String(port),
           "--workspace", workspacePath,
