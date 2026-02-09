@@ -154,67 +154,6 @@ export async function run(prefix: string, args: string[], useNightshiftTui: bool
   }
 }
 
-async function runWithNightshiftTui(opencodePath: string, PATH: string, workspacePath: string, _args: string[], xdgEnv: Record<string, string>, sandboxEnabled: boolean, sandboxOpts: SandboxOptions): Promise<void> {
-  // Find an available port
-  const port = 4096 + Math.floor(Math.random() * 1000);
-  const url = `http://127.0.0.1:${port}`;
-
-  console.log(`Starting opencode server on port ${port}...`);
-
-  // Build server command
-  const baseServerCommand = [opencodePath, "serve", "--hostname", "0.0.0.0", "--port", String(port)];
-  const finalServerCommand = sandboxEnabled
-    ? buildSandboxCommand(baseServerCommand, sandboxOpts)
-    : baseServerCommand;
-
-  // Start opencode as a server
-  const serverProc = Bun.spawn(finalServerCommand, {
-    cwd: workspacePath,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: sandboxEnabled ? sandboxOpts.env : {
-      ...process.env,
-      ...xdgEnv,
-      ...buildUvEnv(sandboxOpts.prefixPath),
-      PATH,
-      OPENCODE_EXPERIMENTAL_LSP_TY: "true",
-    },
-  });
-
-  // Wait for server to be ready
-  let ready = false;
-  const maxAttempts = 30;
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const response = await fetch(`${url}/global/health`);
-      if (response.ok) {
-        ready = true;
-        break;
-      }
-    } catch {
-      // Server not ready yet
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-
-  if (!ready) {
-    serverProc.kill();
-    throw new Error("Failed to start opencode server");
-  }
-
-  console.log(`Server ready. Launching Nightshift TUI...`);
-
-  // Import and launch the nightshift TUI
-  const { tui } = await import("../../tui/tui/app");
-
-  try {
-    await tui({ url, args: {}, directory: workspacePath });
-  } finally {
-    // Clean up server when TUI exits
-    serverProc.kill();
-  }
-}
-
 function formatEventForCli(event: RalphEvent): string | null {
   switch (event.type) {
     case "ralph.started":
@@ -272,6 +211,10 @@ function formatEventForCli(event: RalphEvent): string | null {
     }
     case "session.permission":
       return `[Auto-approving ${event.permission}${event.description ? `: ${event.description}` : ""}]`;
+    case "resolver.start":
+      return `\n[ralph] ── Resolver resolving conflicts ──\n${event.conflicts}`;
+    case "resolver.complete":
+      return `[ralph] ── Resolver finished ──`;
     case "worktree.created":
       return `[ralph] Created worktree: ${event.branchName} → ${event.worktreePath}`;
     case "worktree.merged":
@@ -406,7 +349,7 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
       await ralphTui({ serverUrl: `http://localhost:${port}` });
     } else {
       // Keep process alive
-      await new Promise(() => {});
+      await new Promise(() => { });
     }
     return;
   }

@@ -112,14 +112,14 @@ if (import.meta.main) {
 
           const ralphOptions: RalphOptions | undefined = ralphEnabled
             ? {
-                enabled: true,
-                prompt: ralphPrompt,
-                agentModel: ralphAgentModel,
-                evalModel: ralphEvalModel,
-                useNightshiftTui,
-                serve: serveMode,
-                servePort: argv["serve-port"] as number,
-              }
+              enabled: true,
+              prompt: ralphPrompt,
+              agentModel: ralphAgentModel,
+              evalModel: ralphEvalModel,
+              useNightshiftTui,
+              serve: serveMode,
+              servePort: argv["serve-port"] as number,
+            }
             : undefined;
 
           if (argv.prefix) {
@@ -163,31 +163,6 @@ if (import.meta.main) {
           process.exit(1);
         }
       }
-    )
-    .command(
-      "attach <url>",
-      "Attach to a running opencode server",
-      (y) =>
-        y
-          .positional("url", {
-            type: "string",
-            demandOption: true,
-            describe: "URL of the opencode server (e.g., http://localhost:4096)",
-          })
-          .option("session", {
-            alias: "s",
-            type: "string",
-            describe: "Session ID to continue",
-          }),
-      async (argv) => {
-        try {
-          const { tui } = await import("./tui/tui/app");
-          await tui(buildAttachTuiArgs(argv.url!, argv.session, process.cwd()));
-        } catch (err) {
-          console.error("Attach failed:", err);
-          process.exit(1);
-        }
-      },
     )
     .command(
       "eval",

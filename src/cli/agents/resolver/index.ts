@@ -18,6 +18,10 @@ export interface ResolverResult {
 export async function resolve(options: ResolverOptions): Promise<ResolverResult> {
   const { client, conflicts, model, bus } = options;
 
+  if (bus) {
+    bus.publish({ type: "resolver.start", timestamp: Date.now(), conflicts });
+  }
+
   const prompt = resolverPrompt(conflicts);
 
   const { output } = await runSession({
@@ -25,9 +29,13 @@ export async function resolve(options: ResolverOptions): Promise<ResolverResult>
     prompt,
     title: "merge-resolver",
     model,
-    phase: "executor",
+    phase: "resolver",
     bus,
   });
+
+  if (bus) {
+    bus.publish({ type: "resolver.complete", timestamp: Date.now() });
+  }
 
   return { output };
 }

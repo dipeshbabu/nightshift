@@ -62,6 +62,10 @@ export function formatEvent(event: RalphEvent): string | null {
     }
     case "session.permission":
       return `[Auto-approving ${event.permission}${event.description ? `: ${event.description}` : ""}]`;
+    case "resolver.start":
+      return `\n── Resolver resolving conflicts ──\n${event.conflicts}`;
+    case "resolver.complete":
+      return `── Resolver finished ──`;
     case "worktree.created":
       return `[ralph] Created worktree: ${event.branchName} → ${event.worktreePath}`;
     case "worktree.merged":

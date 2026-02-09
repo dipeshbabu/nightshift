@@ -82,13 +82,13 @@ export interface BossCompleteEvent extends BaseEvent {
 
 export interface SessionTextDeltaEvent extends BaseEvent {
   type: "session.text.delta";
-  phase: "executor" | "validator";
+  phase: "executor" | "validator" | "resolver";
   delta: string;
 }
 
 export interface SessionToolStatusEvent extends BaseEvent {
   type: "session.tool.status";
-  phase: "executor" | "validator";
+  phase: "executor" | "validator" | "resolver";
   tool: string;
   status: "running" | "completed" | "error";
   detail?: string;
@@ -99,7 +99,7 @@ export interface SessionToolStatusEvent extends BaseEvent {
 
 export interface SessionPermissionEvent extends BaseEvent {
   type: "session.permission";
-  phase: "executor" | "validator";
+  phase: "executor" | "validator" | "resolver";
   permission: string;
   description: string;
 }
@@ -107,6 +107,15 @@ export interface SessionPermissionEvent extends BaseEvent {
 export interface RalphInterruptedEvent extends BaseEvent {
   type: "ralph.interrupted";
   reason: "user_quit" | "user_stop";
+}
+
+export interface ResolverStartEvent extends BaseEvent {
+  type: "resolver.start";
+  conflicts: string;
+}
+
+export interface ResolverCompleteEvent extends BaseEvent {
+  type: "resolver.complete";
 }
 
 export interface WorktreeCreatedEvent extends BaseEvent {
@@ -149,6 +158,8 @@ export type RalphEvent =
   | SessionTextDeltaEvent
   | SessionToolStatusEvent
   | SessionPermissionEvent
+  | ResolverStartEvent
+  | ResolverCompleteEvent
   | WorktreeCreatedEvent
   | WorktreeMergedEvent
   | WorktreeMergeConflictEvent
