@@ -8,7 +8,8 @@ description: Autonomous worker/boss agent loop for iterative task completion
   If you find a bug, or have an idea to improve Nightshift, please raise an issue on [Github](https://github.com/nightshiftco/nightshift/tree/main).
 </Warning>
 
-Ralph is Nightshift's autonomous agent execution loop. It orchestrates two agents — a **worker** and a **boss** — in iterative cycles until a task is complete or a maximum iteration limit is reached.
+Ralph is Nightshift's autonomous agent execution loop. It orchestrates two agents, a **worker** and a **boss**,
+in iterative cycles until a task is complete or a maximum iteration limit is reached.
 
 ## Architecture
 
@@ -16,9 +17,91 @@ The loop has three agent roles:
 
 | Role | Purpose |
 |------|---------|
-| **Worker** (executor) | Performs the coding work. Receives the task prompt and optional feedback from the previous boss evaluation. |
+| **Worker** (executor) | Performs the work. Receives the task prompt and optional feedback from the previous boss evaluation. |
 | **Boss** (validator) | Evaluates the worker's output. Decides whether the task is complete or provides feedback for the next iteration. |
 | **Resolver** | Handles git merge conflicts when integrating the task branch back into main. Only runs when conflicts are detected. |
+
+### The prompts
+
+#### Worker
+```javascript
+export function workerPrompt(basePrompt: string, evaluatorFeedback?: string): string {
+  const parts = [
+    `You are a worker. Your job is to complete the task below by working directly in the environment.
+
+## Instructions
+
+- This may be an existing or new environment. You should start every session with initial exploration to understand the current state of the environment.
+- You should start by reading your git history to understand what has been done before.
+- You should then read documentation as this will often contain important information about previous work and the current state of the environment.
+- Work directly in the environment to complete the task using all tools and skills available to you.
+- Always produce artifacts — code, data, analysis — committed to files in the workspace.
+- Documentation is very important. Document your work, your throught process, how to overcome certain challenges and gotchas. You are writing to your future self or to any other worker who may work in this environment in the future.
+- You should work towards turning the task into reusable python code, if you can. Not all tasks can be turned into reusable code, but if you can, you should do it.
+- You should test code your write and work towards extensive coverage. Tests aren't always possible, especially if the task involves side effects. Make note of these in your documentation. Mock when you can.
+- Python is the best language to express what you want the computer to do. You should always use uv as the python toolchain. The environment is already set up for you.
+- You need to keep your README.md up to date. You should have a docs directory where you put all of the detailed documentation of your work, learnings, and gotchas. The README.md should reference the docs. This will help you, your future self, your colleuges, and your boss.
+- Tests are important artifacts that should be committed to the repository.
+- You should be cautious that you don't invoke functions or tooling that could create a side effect outside of this environment more than once during a run unless it's part of the task. For example, invoking an email function that sends an email to a real user would be a side effect that should be avoided. Or writing to a database more than once. Instead, you should try to mock functionality until you're sure that the side effect will work as expected, then run it.
+- When you are satisfied with your work, \`git add\` the relevant files and \`git commit\` with a descriptive message explaining:
+  - What you did
+  - Why you did it
+  - What the output means (if applicable)
+- Your commit messages are how the evaluator understands your progress — write them as a briefing.
+- Never ask questions — figure it out using the tools and skills available to you.
+- If you feel like there is miscommunication between you and the boss, do your best to document, they will read it.
+- Ensure you're keeping track of complex work with TODOs.
+- If you are iterating on evaluator feedback, address each point specifically.
+
+## Task
+${basePrompt}`,
+  ];
+
+  if (evaluatorFeedback) {
+    parts.push(`\n## Boss Feedback
+The boss reviewed your previous work and found issues. Address each point:
+
+${evaluatorFeedback}`);
+  }
+
+  return parts.join("\n");
+}
+
+```
+#### Boss
+
+```javascript
+export function bossPrompt(basePrompt: string): string {
+  return `You are the Boss. Your job is to determine whether the worker has completed the original task.
+
+## Instructions
+
+- Read the original task below to understand exactly what was asked.
+- Start your analysis by checking if there are uncommitted changes in the worker's repository. If there are, the task is not done.
+- Read the documentation to understand what work has been done. If there is no documentation, or if the documentation does not explain the work that was done, the task is not done.
+- You should make sure the README.md is up to date and reflects the current state of the project. If it doesn't, the task is not done.
+- Run tests to see if all tests pass. If any test fails, the task is not done.
+- Run \`git log\` to see commit history and understand what work has been done.
+- **Audit the work hands-on**: examine committed files, run scripts, execute queries, verify outputs actually match what was claimed. Don't take the worker's word for it — test it yourself.
+- Check that artifacts exist and are correct (not just that a commit was made).
+- **Only evaluate against the original task requirements** — do not invent, add, or infer requirements beyond what was explicitly stated.
+- If there are gaps in test converage, you can suggest methods to improve it. However, not all real world tasks can be mapped to unit tests. Some tasks will not have easily testable outputs, expecially if they involve side effects. You should still try to come up with ways to provide test rigour.
+- Not everything can be make into reusable code. If the task involves items that can help the worker with downstream work, you should suggest to the worker that they should make them into reusable code. An example is a function that provides consistent email styling.
+- You should be mindful on how to facilitate the worker's future learning and growth. If the task is not done, provide specific, actionable feedback that will help the worker understand what they missed and how to fix it. Have them consistently update documentation for future downstream use.
+- In your grading process, be sure that you don't invoke functions or tooling that could create a side effect outside of this environment. For example, invoking an email function that sends an email to a real user would be a side effect that should be avoided. Instead, you can suggest to the worker that they mock such functions in their tests.
+- If the task is done, provide a brief explanation of why you think it's done, referencing specific evidence from the commit history, files, tests, and outputs.
+
+## Verdict Format
+
+- If the task is fully complete: respond with \`VERDICT: DONE\` on its own line.
+- If the task is not complete: respond with \`VERDICT: NOT DONE\` on its own line, followed by specific actionable feedback for the worker — what's missing, what's wrong, what needs to change.
+
+## Original Task
+${basePrompt}`;
+}
+
+```
+
 
 Each agent runs in its own OpenCode server instance, scoped to the task's workspace.
 
@@ -66,7 +149,9 @@ In serve mode, each task submitted via `POST /prompt` gets its own isolated [wor
 
 ## Event Bus
 
-All loop activity is published to an internal event bus. In CLI mode, events are formatted and printed to stdout. In serve mode, events are streamed via SSE and persisted to JSONL files.
+All loop activity is published to an internal event bus. 
+In CLI mode, events are formatted and printed to stdout. 
+In serve mode, events are streamed via SSE and persisted to JSONL files.
 
 ### Loop events
 

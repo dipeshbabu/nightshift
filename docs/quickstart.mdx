@@ -13,41 +13,28 @@ description: Get up and running with Nightshift
 After building or installing Nightshift, prepare the agent and it's environment with:
 
 ```bash
-nightshift install --prefix ~/.demo
+nightshift install --prefix ~/my-agent
 ```
-
-This downloads and installs:
-- OpenCode (and soon Claude Code, Gemini CLI, and Codex see [Contributing](https://docs.nightshift.sh/contributing) to help us out)
-- uv (Python toolchain manager)
-- ripgrep
-- bwrap (if you're on linux)
 
 ## Launch the Agent
 
-
-### Run Nightshift
+### Run Opencode with prefix as working directory
 ```bash
 nightshift run 
 ```
-
-This will default to the last ran or installed prefix. To change the prefix you want Nightshift to run you can pass the `--prefix` flag:
-
-### Running Nightshift with Prefix 
+### Run Ralph from prompt file
 ```bash
-nightshift run --prefix ~/.demo
+nightshift run --ralph --prompt task.txt
 ```
 
-Currently, Nightshift will default to running Opencode as the Agent Harness. We'd like to add support for other Agent harnesses in the future.
-
-You have the option to run the Nightshift TUI which will eventually be a simplified version of the Opencode TUI used for our customers (who are not technical).
-
-The Nightshift TUI is still a work in progress.
-
-
-### Running the Nightshift TUI
+### Running Ralph server
 
 ```bash
-nightshift run --run-nightshift-tui
+nightshift run --ralph serve 
 ```
 
-Nightshift 
+### Running Ralph with Jobs TUI
+```bash
+nightshift run --ralph serve --run-nightshift-tui
+```
+
