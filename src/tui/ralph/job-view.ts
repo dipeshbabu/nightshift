@@ -27,6 +27,7 @@ export function createJobView(
   renderer: CliRenderer,
   serverUrl: string,
   job: Job,
+  runId: string,
   callbacks: JobViewCallbacks,
 ): JobViewHandle {
   const promptPreview = job.prompt.length > 40
@@ -172,10 +173,10 @@ export function createJobView(
       input.onPaste = onPaste;
       renderer.keyInput.on("keypress", onKeypress);
 
-      if (job.runId) {
-        const runId = job.runId;
+      if (runId) {
         // Immediately reflect known status in UI
-        setRunningUI(job.status === "running");
+        const isActive = runId === job.runId;
+        setRunningUI(isActive && job.status === "running");
 
         (async () => {
           let hasTerminal = false;
@@ -197,7 +198,7 @@ export function createJobView(
 
           if (hasTerminal) {
             setRunningUI(false);
-          } else {
+          } else if (isActive) {
             beginStreaming(runId);
           }
         })();

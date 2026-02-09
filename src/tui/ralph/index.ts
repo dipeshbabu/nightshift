@@ -1,6 +1,7 @@
 import { createCliRenderer } from "@opentui/core";
 import { createState, getJob } from "./state";
 import { createJobBoard, type JobBoardHandle } from "./job-board";
+import { createRunsView, type RunsViewHandle } from "./runs-view";
 import { createJobView, type JobViewHandle } from "./job-view";
 import type { RalphEvent } from "../../cli/agents/events";
 
@@ -9,14 +10,17 @@ export async function ralphTui(opts: { serverUrl: string }) {
   const state = createState();
 
   let boardHandle: JobBoardHandle | null = null;
+  let runsViewHandle: RunsViewHandle | null = null;
   let viewHandle: JobViewHandle | null = null;
 
   // Lightweight SSE watchers for jobs running in the background (from the board)
   const bgWatchers = new Map<string, { abort: () => void }>();
 
-  function navigate(view: "job-board" | "job-view", jobId?: string) {
+  function navigate(view: "job-board" | "runs-view" | "job-view", jobId?: string, runId?: string) {
     boardHandle?.unmount();
     boardHandle = null;
+    runsViewHandle?.unmount();
+    runsViewHandle = null;
     viewHandle?.unmount();
     viewHandle = null;
 
@@ -26,20 +30,19 @@ export async function ralphTui(opts: { serverUrl: string }) {
       state.activeJobId = null;
       boardHandle = createJobBoard(renderer, state, opts.serverUrl, {
         onViewJob(id) {
-          navigate("job-view", id);
+          navigate("runs-view", id);
         },
         onRunJob(id) {
           runJob(id);
         },
         onQuit() {
-          // Abort all background watchers
           for (const w of bgWatchers.values()) w.abort();
           bgWatchers.clear();
           renderer.destroy();
         },
       });
       boardHandle.mount();
-    } else if (view === "job-view" && jobId) {
+    } else if (view === "runs-view" && jobId) {
       state.activeJobId = jobId;
       const job = getJob(state, jobId);
       if (!job) {
@@ -47,18 +50,40 @@ export async function ralphTui(opts: { serverUrl: string }) {
         return;
       }
 
-      viewHandle = createJobView(renderer, opts.serverUrl, job, {
+      runsViewHandle = createRunsView(renderer, job, {
+        onViewRun(selectedRunId) {
+          navigate("job-view", jobId, selectedRunId);
+        },
         onBack() {
           navigate("job-board");
         },
-        onJobStatusChange(id, status, runId) {
+      });
+      runsViewHandle.mount();
+    } else if (view === "job-view" && jobId && runId) {
+      state.activeJobId = jobId;
+      const job = getJob(state, jobId);
+      if (!job) {
+        navigate("job-board");
+        return;
+      }
+
+      viewHandle = createJobView(renderer, opts.serverUrl, job, runId, {
+        onBack() {
+          navigate("runs-view", jobId);
+        },
+        onJobStatusChange(id, status, newRunId) {
           const j = getJob(state, id);
           if (j) {
             j.status = status;
-            if (runId) j.runId = runId;
+            if (newRunId) {
+              j.runId = newRunId;
+              if (!j.runIds.includes(newRunId)) {
+                j.runIds.push(newRunId);
+              }
+            }
           }
-          if (status === "running" && runId) {
-            watchJobCompletion(id, runId);
+          if (status === "running" && newRunId) {
+            watchJobCompletion(id, newRunId);
           }
         },
       });
@@ -81,6 +106,9 @@ export async function ralphTui(opts: { serverUrl: string }) {
       });
       const { id } = (await res.json()) as { id: string };
       job.runId = id;
+      if (!job.runIds.includes(id)) {
+        job.runIds.push(id);
+      }
       boardHandle?.refresh();
 
       // If the user already navigated to this job's view, tell it to start streaming
@@ -154,9 +182,10 @@ export async function ralphTui(opts: { serverUrl: string }) {
     const job = getJob(state, jobId);
     if (job) {
       job.status = status;
-      // Only refresh board if we're currently on it
       if (state.view === "job-board") {
         boardHandle?.refresh();
+      } else if (state.view === "runs-view" && state.activeJobId === jobId) {
+        runsViewHandle?.refresh();
       }
     }
   }

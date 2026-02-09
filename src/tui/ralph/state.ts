@@ -5,11 +5,12 @@ export interface Job {
   prompt: string;
   status: JobStatus;
   runId: string | null;
+  runIds: string[];
   createdAt: number;
 }
 
 export interface AppState {
-  view: "job-board" | "job-view";
+  view: "job-board" | "runs-view" | "job-view";
   activeJobId: string | null;
   jobs: Job[];
   boardFocus: "list" | "editor";
@@ -32,6 +33,7 @@ export function addJob(state: AppState, prompt: string): Job {
     prompt,
     status: "draft",
     runId: null,
+    runIds: [],
     createdAt: Date.now(),
   };
   state.jobs.push(job);
