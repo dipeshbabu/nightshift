@@ -1,0 +1,94 @@
+---
+title: Worktrees
+description: Git worktree-based isolation for concurrent agent task execution
+---
+
+<Warning>
+  Nightshift is currently in its infancy and is subject to change and incompleteness.
+  If you find a bug, or have an idea to improve Nightshift, please raise an issue on [Github](https://github.com/nightshiftco/nightshift/tree/main).
+</Warning>
+
+When running in [serve mode](/ralph-loop#serve-mode), Nightshift uses Git worktrees to isolate each agent task on its own branch. This allows multiple tasks to run concurrently without interfering with each other or with the main branch.
+
+## How It Works
+
+Each task submitted to the Ralph server goes through a worktree lifecycle:
+
+```
+1. Create    →  git worktree add <path> -b task/<shortId>
+2. Execute   →  Run the worker/boss loop inside the worktree
+3. Merge     →  Merge main into worktree, then worktree into main
+4. Cleanup   →  git worktree remove --force && git branch -D
+```
+
+### 1. Creation
+
+When a task starts, Nightshift creates a new Git worktree branching off of the current `main`:
+
+```
+<prefix>/worktrees/task-<shortId>/
+```
+
+The branch name uses the first 16 characters of the run UUID (e.g. `task/a1b2c3d4e5f6g7h8`). If a stale branch with the same name exists from a previous crashed run, it is automatically cleaned up before the new worktree is created.
+
+### 2. Execution
+
+The worker and boss agents operate entirely within the worktree directory. Each task gets its own pair of OpenCode server instances scoped to the worktree path. All file reads, writes, and git commits happen in the worktree — the main branch remains untouched during execution.
+
+### 3. Merge
+
+Once the boss approves a task, Nightshift integrates the changes back into `main` in two steps:
+
+1. **Merge main into the worktree** — picks up any changes that landed on main while the task was running
+2. **Merge the worktree branch into main** — applies the task's changes
+
+#### Conflict Resolution
+
+If the first merge produces conflicts, Nightshift spawns a **resolver agent** to fix them. The resolver examines the conflicted files, resolves the merge markers, and commits. The merge is then retried — up to 3 attempts.
+
+```
+merge main → worktree
+  ├─ clean?  → merge worktree → main
+  └─ conflict?
+       ├─ resolver fixes conflicts
+       ├─ abort merge, retry
+       └─ (up to 3 retries)
+```
+
+#### Merge Lock
+
+When multiple tasks finish around the same time, a promise-chain mutex serializes all merge-into-main operations. This prevents race conditions where two branches try to merge into main simultaneously.
+
+### 4. Cleanup
+
+After a task completes (whether successfully or not), the worktree and its branch are always removed in a `finally` block:
+
+- `git worktree remove --force <path>` removes the worktree directory
+- `git branch -D <branchName>` deletes the task branch
+
+Failures during cleanup are logged as warnings but do not throw — the run still completes.
+
+## Stale Worktree Pruning
+
+On startup, Nightshift prunes any worktrees left behind by a previous crash. It runs `git worktree prune` to clean up internal git bookkeeping, then parses `git worktree list --porcelain` to find and force-remove any remaining worktrees under the managed `<prefix>/worktrees/` directory.
+
+## Events
+
+Worktree lifecycle events are published to the event bus and streamed via SSE in serve mode:
+
+| Event | Description |
+|-------|-------------|
+| `worktree.created` | A new worktree and branch were created. Includes `branchName` and `worktreePath`. |
+| `worktree.merged` | The task branch was successfully merged into main. |
+| `worktree.merge_conflict` | A merge conflict was detected. Includes the list of conflicted files. |
+| `worktree.removed` | The worktree and branch were cleaned up. |
+
+## Directory Layout
+
+```
+<prefix>/
+├── worktrees/
+│   ├── task-a1b2c3d4e5f6g7h8/   # active worktree for run a1b2...
+│   └── task-f9e8d7c6b5a4c3d2/   # active worktree for run f9e8...
+└── workspace/                     # main branch (source of truth)
+```

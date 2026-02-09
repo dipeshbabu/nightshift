@@ -19,7 +19,7 @@ if (import.meta.main) {
   if (rawArgs[0] === "_ralph-daemon") {
     const { runRalphDaemon } = await import("./cli/agents/ralph-serve-entry");
     await runRalphDaemon(process.argv);
-    await new Promise(() => {});
+    await new Promise(() => { });
   }
 
   // Strip "serve" positional so yargs strict mode doesn't reject it

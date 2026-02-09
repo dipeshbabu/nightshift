@@ -34,21 +34,8 @@
       {
         "group": "Concepts",
         "pages": [
-          "sandbox",
-          {
-            "group": "Agent Routines",
-            "pages": [
-              "agent-routines",
-              "agent-routines/bootstrap"
-            ]
-          },
-          {
-            "group": "Eval",
-            "pages": [
-              "eval",
-              "eval/boot-eval"
-            ]
-          }
+          "ralph-loop",
+          "worktrees"
         ]
       },
       {

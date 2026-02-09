@@ -1,0 +1,138 @@
+---
+title: Ralph Loop
+description: Autonomous worker/boss agent loop for iterative task completion
+---
+
+<Warning>
+  Nightshift is currently in its infancy and is subject to change and incompleteness.
+  If you find a bug, or have an idea to improve Nightshift, please raise an issue on [Github](https://github.com/nightshiftco/nightshift/tree/main).
+</Warning>
+
+Ralph is Nightshift's autonomous agent execution loop. It orchestrates two agents — a **worker** and a **boss** — in iterative cycles until a task is complete or a maximum iteration limit is reached.
+
+## Architecture
+
+The loop has three agent roles:
+
+| Role | Purpose |
+|------|---------|
+| **Worker** (executor) | Performs the coding work. Receives the task prompt and optional feedback from the previous boss evaluation. |
+| **Boss** (validator) | Evaluates the worker's output. Decides whether the task is complete or provides feedback for the next iteration. |
+| **Resolver** | Handles git merge conflicts when integrating the task branch back into main. Only runs when conflicts are detected. |
+
+Each agent runs in its own OpenCode server instance, scoped to the task's workspace.
+
+## Loop Flow
+
+```
+┌─────────────────────────────────────────┐
+│            Start (prompt)               │
+└──────────────┬──────────────────────────┘
+               ▼
+┌─────────────────────────────────────────┐
+│         Worker: execute task            │
+│  (prompt + optional boss feedback)      │
+└──────────────┬──────────────────────────┘
+               ▼
+┌─────────────────────────────────────────┐
+│       Boss: evaluate output             │
+│    Does output contain VERDICT: DONE?   │
+└──────┬──────────────────────┬───────────┘
+       │ yes                  │ no
+       ▼                      ▼
+┌──────────────┐   ┌──────────────────────┐
+│   Return     │   │  Feed boss feedback  │
+│   done=true  │   │  into next iteration │
+└──────────────┘   └──────────┬───────────┘
+                              │
+                              ▼
+                   (back to Worker step)
+```
+
+The loop continues until:
+
+1. The boss includes `VERDICT: DONE` in its output
+2. The maximum iteration count is reached (default: 50)
+
+## Running Modes
+
+### CLI mode
+
+Run a single task directly from the command line. The prompt is read from a file.
+
+```bash
+nightshift run --ralph --prompt task.txt
+```
+
+Events are printed to the console as they occur. The process exits when the task completes.
+
+### Serve mode
+
+Start a long-running HTTP server that accepts tasks via API. See the [Ralph Server](/system/ralph-server) docs for the full endpoint reference.
+
+```bash
+nightshift run --ralph --serve --serve-port 3000
+```
+
+In serve mode, each task submitted via `POST /prompt` gets its own isolated [worktree](/worktrees), agent servers, and loop instance. Multiple tasks can run concurrently.
+
+## Configuration
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ralph` | — | Enable the Ralph agent loop |
+| `--prompt <file>` | — | Path to a text file containing the task prompt (CLI mode only) |
+| `--serve` | `false` | Start the HTTP server instead of running a single task |
+| `--serve-port <port>` | `3000` | Port for the HTTP server |
+| `--agent-model <model>` | `openai/gpt-5.2-codex` | Model for the worker agent |
+| `--eval-model <model>` | `openai/gpt-5.2-codex` | Model for the boss agent |
+
+## Event Bus
+
+All loop activity is published to an internal event bus. In CLI mode, events are formatted and printed to stdout. In serve mode, events are streamed via SSE and persisted to JSONL files.
+
+### Loop events
+
+| Event | Description |
+|-------|-------------|
+| `loop.iteration.start` | A new worker/boss iteration is starting |
+| `loop.done` | The boss approved the task |
+| `loop.not_done` | The boss wants another iteration (includes feedback) |
+| `loop.max_iterations` | The iteration limit was reached |
+
+### Agent events
+
+| Event | Description |
+|-------|-------------|
+| `worker.start` | Worker is starting a coding session |
+| `worker.complete` | Worker finished (includes commit hash and log path) |
+| `boss.start` | Boss is starting evaluation |
+| `boss.complete` | Boss finished (includes verdict) |
+| `resolver.start` | Conflict resolver is starting |
+| `resolver.complete` | Conflicts resolved |
+
+### Session streaming events
+
+| Event | Description |
+|-------|-------------|
+| `session.text.delta` | A chunk of text output from an agent |
+| `session.tool.status` | A tool invocation changed state (running/completed/error) |
+| `session.permission` | A permission request was auto-approved |
+
+### Run lifecycle events
+
+| Event | Description |
+|-------|-------------|
+| `ralph.started` | A run has begun |
+| `ralph.completed` | A run has finished (terminal) |
+| `ralph.error` | An unrecoverable error occurred (terminal) |
+| `ralph.interrupted` | The user stopped the run (terminal) |
+
+## Logging
+
+Each worker and boss session writes a log file to `<prefix>/agent_logs/`:
+
+- Worker logs: `agent_<commitHash>.log`
+- Boss logs: `evaluator_<commitHash>.log`
+
+These logs contain the full session output including tool invocations and are useful for debugging agent behavior.
