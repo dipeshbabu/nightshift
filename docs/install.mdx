@@ -8,7 +8,7 @@ description: How nightshift install sets up an isolated, reproducible agent envi
   If you find a bug, or have an idea to improve Nightshift, please raise an issue on [Github](https://github.com/nightshiftco/nightshift/tree/main).
 </Warning>
 
-`nightshift install` creates a fully isolated agent environment at a given prefix directory. It downloads all required tools, scaffolds a Python workspace, installs dependencies, and initializes a git repository — everything an agent needs to start working.
+`nightshift install` creates a fully isolated agent environment at a given prefix directory. It downloads all required tools, scaffolds a Python workspace, installs dependencies, and initializes a git repository, this is everything the agent needs to start working.
 
 ```bash
 nightshift install --prefix ~/my-agent
@@ -24,7 +24,7 @@ Nightshift detects your platform (macOS or Linux, x64 or arm64) and downloads pl
 
 | Tool | Purpose |
 |------|---------|
-| **OpenCode** | The coding agent runtime |
+| **OpenCode** | The coding agent harness |
 | **uv** | Python package manager (replaces pip/venv) |
 | **ripgrep** | Fast code search (used by agents) |
 | **ty** | Python type checker (installed via `uv tool install`) |
@@ -33,7 +33,7 @@ Each tool is downloaded, extracted, and symlinked into `<prefix>/bin/`. Archives
 
 ### Phase 2: Workspace Creation
 
-After tools are installed, Nightshift creates a Python workspace with:
+After tools are installed, Nightshift creates a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces) with:
 
 1. **Project scaffold** — A `pyproject.toml` with default data science packages (`numpy`, `pandas`, `matplotlib`, `scikit-learn`, `jupyter`), a library skeleton under `src/nightshift_agent_lib/`, and starter tests.
 
@@ -88,7 +88,7 @@ When `nightshift run` launches OpenCode, it constructs an isolated `PATH` and XD
 | `UV_PYTHON_INSTALL_DIR` | `<prefix>/python` |
 | `UV_PYTHON_PREFERENCE` | `only-managed` |
 
-This ensures agents operate in a reproducible environment regardless of what's installed on the host system.
+This ensures agents operate in a reproducible environment regardless of what's installed on the host system. This also keeps the agent off the host system.
 
 ## Options
 

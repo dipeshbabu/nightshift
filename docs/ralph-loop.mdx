@@ -24,30 +24,7 @@ Each agent runs in its own OpenCode server instance, scoped to the task's worksp
 
 ## Loop Flow
 
-```
-┌─────────────────────────────────────────┐
-│            Start (prompt)               │
-└──────────────┬──────────────────────────┘
-               ▼
-┌─────────────────────────────────────────┐
-│         Worker: execute task            │
-│  (prompt + optional boss feedback)      │
-└──────────────┬──────────────────────────┘
-               ▼
-┌─────────────────────────────────────────┐
-│       Boss: evaluate output             │
-│    Does output contain VERDICT: DONE?   │
-└──────┬──────────────────────┬───────────┘
-       │ yes                  │ no
-       ▼                      ▼
-┌──────────────┐   ┌──────────────────────┐
-│   Return     │   │  Feed boss feedback  │
-│   done=true  │   │  into next iteration │
-└──────────────┘   └──────────┬───────────┘
-                              │
-                              ▼
-                   (back to Worker step)
-```
+<img src="/images/ralph-loop-flow.svg" alt="Ralph loop flow diagram" />
 
 The loop continues until:
 
