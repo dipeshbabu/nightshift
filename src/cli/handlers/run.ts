@@ -7,7 +7,7 @@ import { buildSandboxCommand, type SandboxOptions } from "../../lib/sandbox";
 import { startAgentServer } from "../agents/server";
 import { runAgentLoop } from "../agents/loop";
 import { createBus, taggedPublisher } from "../agents/bus";
-import { createWorktree, mergeMainIntoWorktree, mergeWorktreeIntoMain, removeWorktree } from "../agents/worktree";
+import { createWorktree, mergeMainIntoWorktree, mergeWorktreeIntoMain, removeWorktree, abortMerge, withMergeLock, pruneStaleWorktrees } from "../agents/worktree";
 import { resolve as resolveConflicts } from "../agents/resolver";
 import type { RalphEvent } from "../agents/events";
 
@@ -243,13 +243,16 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
     const worktreesDir = join(prefix, "worktrees");
     mkdirSync(worktreesDir, { recursive: true });
 
+    // Prune stale worktrees left behind by a previous crash
+    await pruneStaleWorktrees(workspacePath, worktreesDir);
+
     startRalphServer({
       port,
       bus,
       prefix,
       onPrompt: async (prompt: string, runId: string) => {
         const publisher = taggedPublisher(bus, runId);
-        const shortId = runId.slice(0, 8);
+        const shortId = runId.slice(0, 16);
         const branchName = `task/${shortId}`;
 
         // Create an isolated worktree for this task
@@ -305,12 +308,16 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
                 bus: publisher,
               });
 
+              // Abort any leftover merge state before retrying
+              await abortMerge(worktreePath);
               merge = await mergeMainIntoWorktree(worktreePath);
               retries++;
             }
 
             if (merge.clean) {
-              await mergeWorktreeIntoMain(workspacePath, branchName);
+              await withMergeLock(async () => {
+                await mergeWorktreeIntoMain(workspacePath, branchName);
+              });
               publisher.publish({
                 type: "worktree.merged",
                 timestamp: Date.now(),
