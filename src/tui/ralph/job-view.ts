@@ -10,11 +10,12 @@ import {
 import { OutputBuffer } from "./output";
 import { streamEvents, renderEvent, type StreamHandle } from "./stream";
 import type { RalphEvent } from "../../cli/agents/events";
-import type { Job } from "./state";
+import type { Job, JobStatus } from "./state";
+import type { RalphClient } from "./client";
 
 export interface JobViewCallbacks {
   onBack: () => void;
-  onJobStatusChange: (jobId: string, status: "running" | "completed" | "error", runId?: string) => void;
+  onJobStatusChange: (jobId: string, status: JobStatus, runId?: string) => void;
 }
 
 export interface JobViewHandle {
@@ -28,6 +29,7 @@ export function createJobView(
   serverUrl: string,
   job: Job,
   runId: string,
+  client: RalphClient,
   callbacks: JobViewCallbacks,
 ): JobViewHandle {
   const promptPreview = job.prompt.length > 40
@@ -108,12 +110,7 @@ export function createJobView(
     buf.appendLine("");
 
     try {
-      const res = await fetch(`${serverUrl}/prompt`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
-      });
-      const { id } = (await res.json()) as { id: string };
+      const id = await client.submitPrompt(prompt, job.id);
       callbacks.onJobStatusChange(job.id, "running", id);
       activeStream = streamEvents(serverUrl, id, buf, { onEnd: onStreamEnd });
     } catch (err) {
@@ -186,7 +183,11 @@ export function createJobView(
               const events: RalphEvent[] = await res.json();
               for (const event of events) {
                 renderEvent(event, buf);
-                if (event.type === "ralph.completed" || event.type === "ralph.error") {
+                if (
+                  event.type === "ralph.completed" ||
+                  event.type === "ralph.error" ||
+                  event.type === "ralph.interrupted"
+                ) {
                   hasTerminal = true;
                 }
               }

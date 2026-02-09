@@ -12,6 +12,8 @@ export function formatEvent(event: RalphEvent): string | null {
       return `[ralph] Completed after ${event.iterations} iteration(s). Done: ${event.done}`;
     case "ralph.error":
       return `[ralph] Error: ${event.error}`;
+    case "ralph.interrupted":
+      return `[ralph] Run interrupted (${event.reason})`;
     case "server.ready":
       return event.reused
         ? `[ralph] Reusing existing ${event.name} server (port ${event.port})`

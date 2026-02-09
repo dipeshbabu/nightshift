@@ -7,7 +7,8 @@ import {
   type KeyEvent,
 } from "@opentui/core";
 import { SpinnerRenderable } from "opentui-spinner";
-import type { Job } from "./state";
+import type { Job, RunStatus } from "./state";
+import type { RalphClient } from "./client";
 
 export interface RunsViewCallbacks {
   onViewRun: (runId: string) => void;
@@ -20,15 +21,18 @@ export interface RunsViewHandle {
   refresh: () => void;
 }
 
-const STATUS_ICONS: Record<string, string> = {
+const RUN_STATUS_ICONS: Record<RunStatus, string> = {
   running: "[*]",
   completed: "[+]",
   error: "[!]",
+  interrupted: "[~]",
+  unknown: "[?]",
 };
 
 export function createRunsView(
   renderer: CliRenderer,
   job: Job,
+  client: RalphClient,
   callbacks: RunsViewCallbacks,
 ): RunsViewHandle {
   const promptPreview = job.prompt.length > 50
@@ -91,18 +95,15 @@ export function createRunsView(
   root.add(listBox);
   root.add(footer);
 
+  // Per-run statuses fetched from server
+  let runStatuses: Record<string, RunStatus> = {};
+
   function deriveOptions() {
     // Newest first
     const reversed = [...job.runIds].reverse();
     return reversed.map((runId, i) => {
       const runIndex = job.runIds.length - i;
-      const isActive = runId === job.runId;
-      let icon: string;
-      if (isActive) {
-        icon = STATUS_ICONS[job.status] ?? "[+]";
-      } else {
-        icon = "[+]"; // older runs are completed
-      }
+      const icon = RUN_STATUS_ICONS[runStatuses[runId] ?? "unknown"];
       return {
         name: `${icon} Run #${runIndex}`,
         description: runId.slice(0, 8),
@@ -119,6 +120,14 @@ export function createRunsView(
     } else {
       spinner.stop();
     }
+  }
+
+  async function fetchStatuses() {
+    if (job.runIds.length === 0) return;
+    try {
+      runStatuses = await client.getRunStatuses(job.runIds);
+    } catch {}
+    refresh();
   }
 
   function onItemSelected() {
@@ -139,6 +148,7 @@ export function createRunsView(
       refresh();
       renderer.keyInput.on("keypress", onKeypress);
       runList.on(SelectRenderableEvents.ITEM_SELECTED, onItemSelected);
+      fetchStatuses();
     },
     unmount() {
       renderer.keyInput.removeListener("keypress", onKeypress);

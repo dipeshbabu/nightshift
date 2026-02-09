@@ -1,13 +1,28 @@
 import { createCliRenderer } from "@opentui/core";
 import { createState, getJob } from "./state";
+import { RalphClient } from "./client";
 import { createJobBoard, type JobBoardHandle } from "./job-board";
 import { createRunsView, type RunsViewHandle } from "./runs-view";
 import { createJobView, type JobViewHandle } from "./job-view";
 import type { RalphEvent } from "../../cli/agents/events";
 
 export async function ralphTui(opts: { serverUrl: string }) {
-  const renderer = await createCliRenderer({ exitOnCtrlC: true });
+  const renderer = await createCliRenderer({ exitOnCtrlC: false });
   const state = createState();
+  const client = new RalphClient(opts.serverUrl);
+
+  // Load persisted jobs from server
+  try {
+    const jobs = await client.listJobs();
+    state.jobs = jobs;
+    // Mark any jobs still "running" from a previous session as interrupted
+    for (const job of state.jobs) {
+      if (job.status === "running") {
+        job.status = "interrupted";
+        await client.updateJob(job.id, { status: "interrupted" });
+      }
+    }
+  } catch {}
 
   let boardHandle: JobBoardHandle | null = null;
   let runsViewHandle: RunsViewHandle | null = null;
@@ -15,6 +30,21 @@ export async function ralphTui(opts: { serverUrl: string }) {
 
   // Lightweight SSE watchers for jobs running in the background (from the board)
   const bgWatchers = new Map<string, { abort: () => void }>();
+
+  async function quit() {
+    // Interrupt all running jobs before exiting
+    const running = state.jobs.filter((j) => j.status === "running" && j.runId);
+    await Promise.all(running.map((j) => client.interruptRun(j.runId!, "user_quit")));
+
+    for (const w of bgWatchers.values()) w.abort();
+    bgWatchers.clear();
+    renderer.destroy();
+  }
+
+  // Handle SIGINT for graceful quit
+  process.on("SIGINT", () => {
+    quit();
+  });
 
   function navigate(view: "job-board" | "runs-view" | "job-view", jobId?: string, runId?: string) {
     boardHandle?.unmount();
@@ -28,7 +58,7 @@ export async function ralphTui(opts: { serverUrl: string }) {
 
     if (view === "job-board") {
       state.activeJobId = null;
-      boardHandle = createJobBoard(renderer, state, opts.serverUrl, {
+      boardHandle = createJobBoard(renderer, state, client, {
         onViewJob(id) {
           navigate("runs-view", id);
         },
@@ -36,9 +66,7 @@ export async function ralphTui(opts: { serverUrl: string }) {
           runJob(id);
         },
         onQuit() {
-          for (const w of bgWatchers.values()) w.abort();
-          bgWatchers.clear();
-          renderer.destroy();
+          quit();
         },
       });
       boardHandle.mount();
@@ -50,7 +78,7 @@ export async function ralphTui(opts: { serverUrl: string }) {
         return;
       }
 
-      runsViewHandle = createRunsView(renderer, job, {
+      runsViewHandle = createRunsView(renderer, job, client, {
         onViewRun(selectedRunId) {
           navigate("job-view", jobId, selectedRunId);
         },
@@ -67,7 +95,7 @@ export async function ralphTui(opts: { serverUrl: string }) {
         return;
       }
 
-      viewHandle = createJobView(renderer, opts.serverUrl, job, runId, {
+      viewHandle = createJobView(renderer, opts.serverUrl, job, runId, client, {
         onBack() {
           navigate("runs-view", jobId);
         },
@@ -99,12 +127,7 @@ export async function ralphTui(opts: { serverUrl: string }) {
     boardHandle?.refresh();
 
     try {
-      const res = await fetch(`${opts.serverUrl}/prompt`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: job.prompt }),
-      });
-      const { id } = (await res.json()) as { id: string };
+      const id = await client.submitPrompt(job.prompt, job.id);
       job.runId = id;
       if (!job.runIds.includes(id)) {
         job.runIds.push(id);
@@ -164,6 +187,10 @@ export async function ralphTui(opts: { serverUrl: string }) {
                     updateJobStatus(jobId, "error");
                     return;
                   }
+                  if (event.type === "ralph.interrupted") {
+                    updateJobStatus(jobId, "interrupted");
+                    return;
+                  }
                 } catch {}
               }
             }
@@ -178,7 +205,7 @@ export async function ralphTui(opts: { serverUrl: string }) {
     })();
   }
 
-  function updateJobStatus(jobId: string, status: "completed" | "error") {
+  function updateJobStatus(jobId: string, status: "completed" | "error" | "interrupted") {
     const job = getJob(state, jobId);
     if (job) {
       job.status = status;

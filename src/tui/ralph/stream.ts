@@ -46,7 +46,7 @@ export function streamEvents(
   function handleEvent(event: RalphEvent) {
     renderEvent(event, buf);
 
-    if (event.type === "ralph.completed" || event.type === "ralph.error") {
+    if (event.type === "ralph.completed" || event.type === "ralph.error" || event.type === "ralph.interrupted") {
       endStream();
     }
   }

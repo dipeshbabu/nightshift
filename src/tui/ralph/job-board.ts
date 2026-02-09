@@ -8,7 +8,8 @@ import {
   type KeyEvent,
 } from "@opentui/core";
 import { SpinnerRenderable } from "opentui-spinner";
-import { addJob, removeJob, type AppState, type Job } from "./state";
+import { type AppState, type Job } from "./state";
+import type { RalphClient } from "./client";
 
 export interface JobBoardCallbacks {
   onViewJob: (jobId: string) => void;
@@ -27,15 +28,16 @@ const STATUS_ICONS: Record<Job["status"], string> = {
   running: "[*]",
   completed: "[+]",
   error: "[!]",
+  interrupted: "[~]",
 };
 
-const LIST_HELP = "[n] new  [e] edit  [r] run  [d] delete  [Enter] view  [Esc] quit";
+const LIST_HELP = "[n] new  [e] edit  [r] run  [s] stop  [d] delete  [Enter] view  [Esc] quit";
 const EDITOR_HELP = "[Ctrl+S] save  [Esc] cancel";
 
 export function createJobBoard(
   renderer: CliRenderer,
   state: AppState,
-  serverUrl: string,
+  client: RalphClient,
   callbacks: JobBoardCallbacks,
 ): JobBoardHandle {
   const root = new BoxRenderable(renderer, {
@@ -166,7 +168,7 @@ export function createJobBoard(
     refresh();
   }
 
-  function saveEditor() {
+  async function saveEditor() {
     const text = editor.plainText.trim();
     if (!text) {
       hideEditor();
@@ -174,10 +176,16 @@ export function createJobBoard(
     }
 
     if (state.editingJobId) {
+      // Update existing job
       const job = state.jobs.find((j) => j.id === state.editingJobId);
-      if (job) job.prompt = text;
+      if (job) {
+        job.prompt = text;
+        await client.updateJob(job.id, { prompt: text });
+      }
     } else {
-      addJob(state, text);
+      // Create new job via server
+      const job = await client.createJob(text);
+      state.jobs.push(job);
     }
 
     hideEditor();
@@ -225,10 +233,23 @@ export function createJobBoard(
       return;
     }
 
+    if (key.name === "s") {
+      const id = getSelectedJobId();
+      if (!id) return;
+      const job = state.jobs.find((j) => j.id === id);
+      if (job && job.status === "running" && job.runId) {
+        client.interruptRun(job.runId, "user_stop");
+        job.status = "interrupted";
+        refresh();
+      }
+      return;
+    }
+
     if (key.name === "d") {
       const id = getSelectedJobId();
       if (id) {
-        removeJob(state, id);
+        client.deleteJob(id);
+        state.jobs = state.jobs.filter((j) => j.id !== id);
         refresh();
       }
       return;

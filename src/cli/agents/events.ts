@@ -104,10 +104,16 @@ export interface SessionPermissionEvent extends BaseEvent {
   description: string;
 }
 
+export interface RalphInterruptedEvent extends BaseEvent {
+  type: "ralph.interrupted";
+  reason: "user_quit" | "user_stop";
+}
+
 export type RalphEvent =
   | RalphStartedEvent
   | RalphCompletedEvent
   | RalphErrorEvent
+  | RalphInterruptedEvent
   | ServerReadyEvent
   | ServerCleanupEvent
   | LoopIterationStartEvent
