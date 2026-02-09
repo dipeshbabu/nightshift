@@ -1,118 +1,165 @@
-import {
-  createCliRenderer,
-  BoxRenderable,
-  InputRenderable,
-  ScrollBoxRenderable,
-  InputRenderableEvents,
-  type KeyEvent,
-} from "@opentui/core";
-import { OutputBuffer } from "./output";
-import { streamEvents } from "./stream";
+import { createCliRenderer } from "@opentui/core";
+import { createState, getJob } from "./state";
+import { createJobBoard, type JobBoardHandle } from "./job-board";
+import { createJobView, type JobViewHandle } from "./job-view";
+import type { RalphEvent } from "../../cli/agents/events";
 
 export async function ralphTui(opts: { serverUrl: string }) {
   const renderer = await createCliRenderer({ exitOnCtrlC: true });
+  const state = createState();
 
-  const root = new BoxRenderable(renderer, {
-    id: "root",
-    flexDirection: "column",
-    width: "100%",
-    height: "100%",
-  });
+  let boardHandle: JobBoardHandle | null = null;
+  let viewHandle: JobViewHandle | null = null;
 
-  const output = new ScrollBoxRenderable(renderer, {
-    id: "output",
-    flexGrow: 1,
-    border: true,
-    borderStyle: "rounded",
-    title: " nightshift ",
-    stickyScroll: true,
-  });
+  // Lightweight SSE watchers for jobs running in the background (from the board)
+  const bgWatchers = new Map<string, { abort: () => void }>();
 
-  const inputBar = new BoxRenderable(renderer, {
-    id: "input-bar",
-    height: 3,
-    border: true,
-    borderStyle: "rounded",
-    title: " prompt ",
-  });
-  const input = new InputRenderable(renderer, {
-    id: "input",
-    placeholder: "Type a prompt and press Enter...",
-    flexGrow: 1,
-  });
-  inputBar.add(input);
+  function navigate(view: "job-board" | "job-view", jobId?: string) {
+    boardHandle?.unmount();
+    boardHandle = null;
+    viewHandle?.unmount();
+    viewHandle = null;
 
-  root.add(output);
-  root.add(inputBar);
-  renderer.root.add(root);
-  input.focus();
+    state.view = view;
 
-  const buf = new OutputBuffer(renderer, output);
-  let running = false;
-  let pastedPrompt: string | null = null;
+    if (view === "job-board") {
+      state.activeJobId = null;
+      boardHandle = createJobBoard(renderer, state, opts.serverUrl, {
+        onViewJob(id) {
+          navigate("job-view", id);
+        },
+        onRunJob(id) {
+          runJob(id);
+        },
+        onQuit() {
+          // Abort all background watchers
+          for (const w of bgWatchers.values()) w.abort();
+          bgWatchers.clear();
+          renderer.destroy();
+        },
+      });
+      boardHandle.mount();
+    } else if (view === "job-view" && jobId) {
+      state.activeJobId = jobId;
+      const job = getJob(state, jobId);
+      if (!job) {
+        navigate("job-board");
+        return;
+      }
 
-  function resetInput() {
-    running = false;
-    input.focus();
-    inputBar.title = " prompt ";
+      viewHandle = createJobView(renderer, opts.serverUrl, job, {
+        onBack() {
+          navigate("job-board");
+        },
+        onJobStatusChange(id, status, runId) {
+          const j = getJob(state, id);
+          if (j) {
+            j.status = status;
+            if (runId) j.runId = runId;
+          }
+          if (status === "running" && runId) {
+            watchJobCompletion(id, runId);
+          }
+        },
+      });
+      viewHandle.mount();
+    }
   }
 
-  async function submit(prompt: string) {
-    if (running || !prompt.trim()) return;
-    running = true;
-    input.blur();
-    inputBar.title = " running... ";
+  async function runJob(jobId: string) {
+    const job = getJob(state, jobId);
+    if (!job || job.status === "running") return;
 
-    buf.appendLine(`\n> ${prompt}`);
-    buf.appendLine("");
+    job.status = "running";
+    boardHandle?.refresh();
 
     try {
       const res = await fetch(`${opts.serverUrl}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt: job.prompt }),
       });
       const { id } = (await res.json()) as { id: string };
-      streamEvents(opts.serverUrl, id, buf, { onEnd: resetInput });
+      job.runId = id;
+      boardHandle?.refresh();
+
+      // If the user already navigated to this job's view, tell it to start streaming
+      if (state.view === "job-view" && state.activeJobId === jobId) {
+        viewHandle?.startStreaming(id);
+      }
+
+      // Start a lightweight SSE watcher to update status on completion
+      watchJobCompletion(jobId, id);
     } catch (err) {
-      buf.appendLine(`[error] ${err}`);
-      resetInput();
+      job.status = "error";
+      boardHandle?.refresh();
     }
   }
 
-  input.onPaste = (event) => {
-    event.preventDefault();
-    const text = event.text;
-    const lines = text.split("\n");
+  function watchJobCompletion(jobId: string, runId: string) {
+    bgWatchers.get(jobId)?.abort();
+    const controller = new AbortController();
+    bgWatchers.set(jobId, { abort: () => controller.abort() });
 
-    if (lines.length <= 1) {
-      input.insertText(text);
-      return;
-    }
+    (async () => {
+      try {
+        const res = await fetch(`${opts.serverUrl}/events?runId=${runId}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) {
+          updateJobStatus(jobId, "error");
+          return;
+        }
 
-    pastedPrompt = text;
-    input.value = `[Pasted ${lines.length} lines]`;
-    input.placeholder = "Press Enter to submit pasted prompt, or Esc to clear";
-  };
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = "";
 
-  input.on(InputRenderableEvents.ENTER, () => {
-    if (running) return;
-    const value = pastedPrompt ?? input.value;
-    pastedPrompt = null;
-    input.value = "";
-    input.placeholder = "Type a prompt and press Enter...";
-    submit(value);
-  });
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
 
-  renderer.keyInput.on("keypress", (key: KeyEvent) => {
-    if (key.name === "escape") {
-      if (pastedPrompt) {
-        pastedPrompt = null;
-        input.value = "";
-        input.placeholder = "Type a prompt and press Enter...";
-        return;
+          const frames = sseBuffer.split("\n\n");
+          sseBuffer = frames.pop()!;
+
+          for (const frame of frames) {
+            for (const line of frame.split("\n")) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const event: RalphEvent = JSON.parse(line.slice(6));
+                  if (event.type === "ralph.completed") {
+                    updateJobStatus(jobId, "completed");
+                    return;
+                  }
+                  if (event.type === "ralph.error") {
+                    updateJobStatus(jobId, "error");
+                    return;
+                  }
+                } catch {}
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return;
+        updateJobStatus(jobId, "error");
+      } finally {
+        bgWatchers.delete(jobId);
       }
-      renderer.destroy();
+    })();
+  }
+
+  function updateJobStatus(jobId: string, status: "completed" | "error") {
+    const job = getJob(state, jobId);
+    if (job) {
+      job.status = status;
+      // Only refresh board if we're currently on it
+      if (state.view === "job-board") {
+        boardHandle?.refresh();
+      }
     }
-  });
+  }
+
+  navigate("job-board");
 }

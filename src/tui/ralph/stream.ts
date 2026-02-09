@@ -6,12 +6,32 @@ export interface StreamCallbacks {
   onEnd: () => void;
 }
 
+export interface StreamHandle {
+  abort: () => void;
+}
+
+/**
+ * Render a single event into the output buffer.
+ * Shared by both live streaming and persisted-event replay.
+ */
+export function renderEvent(event: RalphEvent, buf: OutputBuffer) {
+  if (event.type === "session.text.delta") {
+    buf.appendTextDelta(event.delta);
+    return;
+  }
+
+  buf.flush();
+
+  const formatted = formatEvent(event);
+  if (formatted) buf.appendLine(formatted);
+}
+
 export function streamEvents(
   serverUrl: string,
   runId: string,
   buf: OutputBuffer,
   callbacks: StreamCallbacks,
-) {
+): StreamHandle {
   const controller = new AbortController();
   let ended = false;
 
@@ -24,15 +44,7 @@ export function streamEvents(
   }
 
   function handleEvent(event: RalphEvent) {
-    if (event.type === "session.text.delta") {
-      buf.appendTextDelta(event.delta);
-      return;
-    }
-
-    buf.flush();
-
-    const formatted = formatEvent(event);
-    if (formatted) buf.appendLine(formatted);
+    renderEvent(event, buf);
 
     if (event.type === "ralph.completed" || event.type === "ralph.error") {
       endStream();
@@ -89,4 +101,6 @@ export function streamEvents(
       endStream();
     }
   })();
+
+  return { abort: () => endStream() };
 }

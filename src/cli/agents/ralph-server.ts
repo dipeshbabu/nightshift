@@ -1,9 +1,12 @@
+import { join } from "path";
+import { mkdirSync, appendFileSync, existsSync, readFileSync } from "fs";
 import type { EventBus } from "./bus";
 import type { RalphEvent } from "./events";
 
 interface RalphServerOptions {
   port: number;
   bus: EventBus;
+  prefix: string;
   onPrompt: (prompt: string, runId: string) => Promise<void>;
 }
 
@@ -14,7 +17,22 @@ const CORS_HEADERS = {
 };
 
 export function startRalphServer(opts: RalphServerOptions) {
-  const { port, bus, onPrompt } = opts;
+  const { port, bus, prefix, onPrompt } = opts;
+  const runsDir = join(prefix, "runs");
+
+  // Track which runId directories have been created
+  const createdDirs = new Set<string>();
+
+  // Persist every event to disk as JSONL
+  bus.subscribeAll((event: RalphEvent) => {
+    if (!event.runId) return;
+    const runDir = join(runsDir, event.runId);
+    if (!createdDirs.has(event.runId)) {
+      mkdirSync(runDir, { recursive: true });
+      createdDirs.add(event.runId);
+    }
+    appendFileSync(join(runDir, "events.jsonl"), JSON.stringify(event) + "\n");
+  });
 
   const server = Bun.serve({
     port,
@@ -59,6 +77,20 @@ export function startRalphServer(opts: RalphServerOptions) {
           );
         },
         OPTIONS: () => new Response(null, { status: 204, headers: CORS_HEADERS }),
+      },
+      "/runs/:runId/events": {
+        GET: (req) => {
+          const runId = req.params.runId;
+          const eventsFile = join(runsDir, runId, "events.jsonl");
+          if (!existsSync(eventsFile)) {
+            return Response.json([], { headers: CORS_HEADERS });
+          }
+          const content = readFileSync(eventsFile, "utf-8");
+          const events = content.trim().split("\n").filter(Boolean).map((line) => {
+            try { return JSON.parse(line); } catch { return null; }
+          }).filter(Boolean);
+          return Response.json(events, { headers: CORS_HEADERS });
+        },
       },
       "/events": {
         GET: (req) => {
@@ -119,9 +151,10 @@ export function startRalphServer(opts: RalphServerOptions) {
   });
 
   console.log(`[ralph] HTTP server listening on http://localhost:${port}`);
-  console.log(`[ralph]   POST /prompt   — start a run`);
-  console.log(`[ralph]   GET  /events   — SSE event stream`);
-  console.log(`[ralph]   GET  /health   — health check`);
+  console.log(`[ralph]   POST /prompt              — start a run`);
+  console.log(`[ralph]   GET  /events              — SSE event stream`);
+  console.log(`[ralph]   GET  /runs/:runId/events  — replay persisted events`);
+  console.log(`[ralph]   GET  /health              — health check`);
 
   return server;
 }

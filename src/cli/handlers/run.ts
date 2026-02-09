@@ -290,6 +290,7 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
     startRalphServer({
       port,
       bus,
+      prefix,
       onPrompt: async (prompt: string, runId: string) => {
         const publisher = taggedPublisher(bus, runId);
 

@@ -1,0 +1,263 @@
+import {
+  BoxRenderable,
+  TextRenderable,
+  SelectRenderable,
+  TextareaRenderable,
+  SelectRenderableEvents,
+  type CliRenderer,
+  type KeyEvent,
+} from "@opentui/core";
+import { SpinnerRenderable } from "opentui-spinner";
+import { addJob, removeJob, type AppState, type Job } from "./state";
+
+export interface JobBoardCallbacks {
+  onViewJob: (jobId: string) => void;
+  onRunJob: (jobId: string) => void;
+  onQuit: () => void;
+}
+
+export interface JobBoardHandle {
+  mount: () => void;
+  unmount: () => void;
+  refresh: () => void;
+}
+
+const STATUS_ICONS: Record<Job["status"], string> = {
+  draft: "[ ]",
+  running: "[*]",
+  completed: "[+]",
+  error: "[!]",
+};
+
+const LIST_HELP = "[n] new  [e] edit  [r] run  [d] delete  [Enter] view  [Esc] quit";
+const EDITOR_HELP = "[Ctrl+S] save  [Esc] cancel";
+
+export function createJobBoard(
+  renderer: CliRenderer,
+  state: AppState,
+  serverUrl: string,
+  callbacks: JobBoardCallbacks,
+): JobBoardHandle {
+  const root = new BoxRenderable(renderer, {
+    id: "board-root",
+    flexDirection: "column",
+    width: "100%",
+    height: "100%",
+  });
+
+  // Header
+  const header = new BoxRenderable(renderer, {
+    id: "board-header",
+    height: 3,
+    border: true,
+    borderStyle: "rounded",
+    flexDirection: "row",
+    title: " nightshift - Job Board ",
+  });
+  const spinner = new SpinnerRenderable(renderer, {
+    autoplay: false,
+  });
+  header.add(spinner);
+
+  // Job list (wrapped in a box for border)
+  const listBox = new BoxRenderable(renderer, {
+    id: "board-list-box",
+    flexGrow: 1,
+    border: true,
+    borderStyle: "rounded",
+  });
+  const jobList = new SelectRenderable(renderer, {
+    id: "board-list",
+    flexGrow: 1,
+    options: [],
+    showDescription: true,
+  });
+  listBox.add(jobList);
+
+  // Editor area (hidden by default, wrapped in a box for border)
+  const editorBox = new BoxRenderable(renderer, {
+    id: "board-editor-box",
+    flexGrow: 1,
+    border: true,
+    borderStyle: "rounded",
+    title: " editor ",
+  });
+  const editor = new TextareaRenderable(renderer, {
+    id: "board-editor",
+    flexGrow: 1,
+    placeholder: "Type your prompt here...",
+  });
+  editorBox.add(editor);
+
+  // Footer
+  const footer = new BoxRenderable(renderer, {
+    id: "board-footer",
+    height: 3,
+    border: true,
+    borderStyle: "rounded",
+  });
+  const helpText = new TextRenderable(renderer, {
+    id: "board-help",
+    content: LIST_HELP,
+  });
+  footer.add(helpText);
+
+  // Build initial layout
+  root.add(header);
+  root.add(listBox);
+  root.add(footer);
+
+  function deriveOptions() {
+    return state.jobs.map((job) => ({
+      name: `${STATUS_ICONS[job.status]} ${job.prompt.length > 60 ? job.prompt.slice(0, 60) + "..." : job.prompt}`,
+      description: `Created ${new Date(job.createdAt).toLocaleTimeString()}`,
+      value: job.id,
+    }));
+  }
+
+  function refresh() {
+    jobList.options = deriveOptions();
+
+    const hasRunning = state.jobs.some((j) => j.status === "running");
+    if (hasRunning) {
+      spinner.start();
+    } else {
+      spinner.stop();
+    }
+
+    if (state.boardFocus === "list") {
+      helpText.content = LIST_HELP;
+    } else {
+      helpText.content = EDITOR_HELP;
+    }
+  }
+
+  function showEditor(jobId: string | null) {
+    state.boardFocus = "editor";
+    state.editingJobId = jobId;
+
+    // Swap list for editor
+    root.remove("board-list-box");
+    root.remove("board-footer");
+    root.add(editorBox);
+    root.add(footer);
+
+    if (jobId) {
+      const job = state.jobs.find((j) => j.id === jobId);
+      if (job) editor.setText(job.prompt);
+    } else {
+      editor.setText("");
+    }
+
+    editor.focus();
+    refresh();
+  }
+
+  function hideEditor() {
+    state.boardFocus = "list";
+    state.editingJobId = null;
+
+    root.remove("board-editor-box");
+    root.remove("board-footer");
+    root.add(listBox);
+    root.add(footer);
+
+    jobList.focus();
+    refresh();
+  }
+
+  function saveEditor() {
+    const text = editor.plainText.trim();
+    if (!text) {
+      hideEditor();
+      return;
+    }
+
+    if (state.editingJobId) {
+      const job = state.jobs.find((j) => j.id === state.editingJobId);
+      if (job) job.prompt = text;
+    } else {
+      addJob(state, text);
+    }
+
+    hideEditor();
+  }
+
+  function getSelectedJobId(): string | null {
+    const opt = jobList.getSelectedOption();
+    return opt?.value ?? null;
+  }
+
+  function onKeypress(key: KeyEvent) {
+    if (state.boardFocus === "editor") {
+      // Ctrl+S to save
+      if (key.name === "s" && key.ctrl) {
+        saveEditor();
+        return;
+      }
+      // Ctrl+Enter to save
+      if (key.name === "return" && key.ctrl) {
+        saveEditor();
+        return;
+      }
+      if (key.name === "escape") {
+        hideEditor();
+        return;
+      }
+      return;
+    }
+
+    // List mode keybindings
+    if (key.name === "n") {
+      showEditor(null);
+      return;
+    }
+
+    if (key.name === "e") {
+      const id = getSelectedJobId();
+      if (id) showEditor(id);
+      return;
+    }
+
+    if (key.name === "r") {
+      const id = getSelectedJobId();
+      if (id) callbacks.onRunJob(id);
+      return;
+    }
+
+    if (key.name === "d") {
+      const id = getSelectedJobId();
+      if (id) {
+        removeJob(state, id);
+        refresh();
+      }
+      return;
+    }
+
+    if (key.name === "escape") {
+      callbacks.onQuit();
+      return;
+    }
+  }
+
+  function onItemSelected() {
+    const id = getSelectedJobId();
+    if (id) callbacks.onViewJob(id);
+  }
+
+  return {
+    mount() {
+      renderer.root.add(root);
+      jobList.focus();
+      refresh();
+      renderer.keyInput.on("keypress", onKeypress);
+      jobList.on(SelectRenderableEvents.ITEM_SELECTED, onItemSelected);
+    },
+    unmount() {
+      renderer.keyInput.removeListener("keypress", onKeypress);
+      jobList.removeListener(SelectRenderableEvents.ITEM_SELECTED, onItemSelected);
+      renderer.root.remove("board-root");
+    },
+    refresh,
+  };
+}
