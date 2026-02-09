@@ -1,6 +1,39 @@
 import type { RalphEvent } from "../../cli/agents/events";
 import { formatEvent } from "./format";
 import type { OutputBuffer } from "./output";
+import { extname } from "node:path";
+
+const EXT_TO_FILETYPE: Record<string, string> = {
+  ".ts": "typescript",
+  ".tsx": "typescript",
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".py": "python",
+  ".rs": "rust",
+  ".go": "go",
+  ".json": "json",
+  ".html": "html",
+  ".css": "css",
+  ".md": "markdown",
+  ".sh": "bash",
+  ".bash": "bash",
+};
+
+function inferFiletype(tool: string, input?: unknown, metadata?: Record<string, unknown>): string | undefined {
+  // Try to get file path from input or metadata
+  const filePath = (input as any)?.filePath as string | undefined;
+  if (filePath) {
+    const ext = extname(filePath);
+    return EXT_TO_FILETYPE[ext];
+  }
+  // For apply_patch, try the first file in metadata.files
+  const files = metadata?.files as Array<{ filePath?: string; relativePath?: string }> | undefined;
+  if (files?.[0]) {
+    const p = files[0].relativePath || files[0].filePath;
+    if (p) return EXT_TO_FILETYPE[extname(p)];
+  }
+  return undefined;
+}
 
 export interface StreamCallbacks {
   onEnd: () => void;
@@ -21,6 +54,21 @@ export function renderEvent(event: RalphEvent, buf: OutputBuffer) {
   }
 
   buf.flush();
+
+  // Render apply_patch / edit diffs with the DiffRenderable
+  if (event.type === "session.tool.status" && event.status === "completed") {
+    const diff = event.metadata?.diff as string | undefined;
+    if ((event.tool === "apply_patch" || event.tool === "edit") && diff) {
+      const title = event.detail || event.tool;
+      const duration = event.duration;
+      let header = `✓ ${title}`;
+      if (duration !== undefined) header += ` (${duration.toFixed(1)}s)`;
+      buf.appendLine(header);
+      const filetype = inferFiletype(event.tool, event.input, event.metadata);
+      buf.appendDiff(diff, filetype);
+      return;
+    }
+  }
 
   const formatted = formatEvent(event);
   if (formatted) buf.appendLine(formatted);

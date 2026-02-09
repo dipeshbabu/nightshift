@@ -142,6 +142,7 @@ export async function runSession(options: SessionOptions): Promise<SessionResult
                       detail: toolTitle,
                       output: state.output?.trim(),
                       duration,
+                      metadata: state.metadata,
                     });
                   }
                   let msg = `✓ ${toolTitle}`;

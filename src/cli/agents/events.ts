@@ -95,6 +95,7 @@ export interface SessionToolStatusEvent extends BaseEvent {
   input?: unknown;
   output?: string;
   duration?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface SessionPermissionEvent extends BaseEvent {

@@ -1,4 +1,4 @@
-import { TextRenderable, type ScrollBoxRenderable, type CliRenderer } from "@opentui/core";
+import { TextRenderable, DiffRenderable, type ScrollBoxRenderable, type CliRenderer, type Renderable } from "@opentui/core";
 
 export class OutputBuffer {
   private lineCount = 0;
@@ -24,6 +24,22 @@ export class OutputBuffer {
       this.currentTextLine = null;
       this.currentText = "";
     }
+  }
+
+  appendDiff(diff: string, filetype?: string) {
+    const diffView = new DiffRenderable(this.renderer, {
+      id: `diff-${this.lineCount++}`,
+      diff,
+      view: "unified",
+      filetype,
+      showLineNumbers: true,
+      width: "100%",
+    });
+    this.output.add(diffView);
+  }
+
+  appendRenderable(renderable: Renderable) {
+    this.output.add(renderable);
   }
 
   appendTextDelta(delta: string) {
