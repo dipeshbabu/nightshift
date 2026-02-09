@@ -1,0 +1,254 @@
+---
+title: Ralph Server
+description: HTTP server and SSE event stream for the Ralph agent loop
+---
+
+<Warning>
+  Nightshift is currently in its infancy and is subject to change and incompleteness.
+  If you find a bug, or have an idea to improve Nightshift, please raise an issue on [Github](https://github.com/nightshiftco/nightshift/tree/main).
+</Warning>
+
+The Ralph server exposes an HTTP API for triggering agent runs and streaming their progress in real time via Server-Sent Events (SSE). It is started when you run Nightshift with `--ralph --serve`.
+
+```bash
+nightshift run --ralph --serve --serve-port 3000
+```
+
+## Endpoints
+
+### `POST /prompt`
+
+Starts a new agent run asynchronously.
+
+**Request body:**
+
+```json
+{ "prompt": "Fix the failing tests in src/utils" }
+```
+
+**Response** (`202 Accepted`):
+
+```json
+{ "status": "started", "id": "a1b2c3d4-..." }
+```
+
+The returned `id` is a UUID that identifies this run. Use it to filter the event stream.
+
+### `GET /events`
+
+Opens a Server-Sent Events stream. Each event is a JSON object on a `data:` line.
+
+```
+GET /events
+```
+
+Without parameters, all events from all runs are streamed. The connection stays open indefinitely.
+
+#### Filtering by run
+
+Pass a `runId` query parameter to receive only events belonging to a specific run. The stream auto-closes after a terminal event (`ralph.completed` or `ralph.error`) for that run.
+
+```
+GET /events?runId=a1b2c3d4-...
+```
+
+#### Typical client flow
+
+```ts
+// 1. Start a run
+const res = await fetch("http://localhost:3000/prompt", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ prompt: "Fix the failing tests" }),
+});
+const { id } = await res.json();
+
+// 2. Stream events for that run
+const events = new EventSource(`http://localhost:3000/events?runId=${id}`);
+
+events.onmessage = (msg) => {
+  const event = JSON.parse(msg.data);
+  console.log(event.type, event);
+};
+
+// The stream closes automatically when the run finishes.
+```
+
+#### Keepalive
+
+The server sends an SSE comment (`: keepalive`) every 5 seconds to prevent proxies and load balancers from closing idle connections.
+
+### `GET /health`
+
+Returns `{ "status": "ok" }`. Useful for readiness checks.
+
+## Events
+
+Every event includes the following base fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `string` | Discriminator for the event kind |
+| `timestamp` | `number` | Unix epoch milliseconds |
+| `runId` | `string?` | UUID of the run that produced this event |
+
+### Run lifecycle
+
+#### `ralph.started`
+
+Emitted when a run begins.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `workspace` | `string` | Absolute path to the workspace |
+| `agentModel` | `string` | Model used for the worker agent |
+| `evalModel` | `string` | Model used for the boss agent |
+
+#### `ralph.completed`
+
+Emitted when a run finishes. Terminal event — the filtered SSE stream closes after this.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `iterations` | `number` | Total worker/boss iterations completed |
+| `done` | `boolean` | Whether the boss judged the task as done |
+
+#### `ralph.error`
+
+Emitted on an unrecoverable error. Terminal event.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `error` | `string` | Error message |
+
+### Server management
+
+#### `server.ready`
+
+An OpenCode agent server is ready to accept sessions.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Server name (e.g. `nightshift-worker`) |
+| `port` | `number` | Port the server is listening on |
+| `reused` | `boolean` | Whether an existing server was reused |
+
+#### `server.cleanup`
+
+A stale agent server process was cleaned up.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Server name |
+| `pid` | `number` | PID of the killed process |
+
+### Agent loop
+
+#### `loop.iteration.start`
+
+A new worker/boss iteration is starting.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `iteration` | `number` | 1-based iteration number |
+
+#### `loop.done`
+
+The boss judged the task as complete.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `iteration` | `number` | Iteration that produced the final result |
+
+#### `loop.not_done`
+
+The boss judged the task as incomplete. The loop will continue with another worker iteration.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `iteration` | `number` | Current iteration number |
+| `feedback` | `string` | Boss feedback passed to the next worker iteration |
+
+#### `loop.max_iterations`
+
+The loop reached its iteration limit and is stopping.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `maxIterations` | `number` | The configured limit |
+
+### Worker
+
+#### `worker.start`
+
+The worker agent is starting a coding session.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `commitHash` | `string` | Git short hash at the start of the session |
+
+#### `worker.complete`
+
+The worker agent finished its session.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `commitHash` | `string` | Git short hash |
+| `logPath` | `string?` | Path to the session log file |
+
+### Boss
+
+#### `boss.start`
+
+The boss agent is starting an evaluation session.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `commitHash` | `string` | Git short hash being evaluated |
+
+#### `boss.complete`
+
+The boss agent finished its evaluation.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `commitHash` | `string` | Git short hash |
+| `done` | `boolean` | Whether the boss considers the task complete |
+| `logPath` | `string?` | Path to the session log file |
+
+### Session streaming
+
+These events provide real-time output from the underlying OpenCode sessions.
+
+#### `session.text.delta`
+
+A chunk of text output from the agent.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `phase` | `"executor" \| "validator"` | Which agent produced this text |
+| `delta` | `string` | The text chunk |
+
+#### `session.tool.status`
+
+A tool invocation changed state.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `phase` | `"executor" \| "validator"` | Which agent invoked the tool |
+| `tool` | `string` | Tool name |
+| `status` | `"running" \| "completed" \| "error"` | Current state |
+| `detail` | `string?` | Human-readable title or error message |
+| `input` | `unknown?` | Tool input parameters |
+| `output` | `string?` | Tool output (on completion) |
+| `duration` | `number?` | Execution time in seconds |
+
+#### `session.permission`
+
+A permission request was auto-approved.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `phase` | `"executor" \| "validator"` | Which agent requested permission |
+| `permission` | `string` | Permission type |
+| `description` | `string` | What was being approved |

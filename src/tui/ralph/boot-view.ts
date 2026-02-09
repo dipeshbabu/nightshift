@@ -1,0 +1,223 @@
+import {
+  BoxRenderable,
+  InputRenderable,
+  ScrollBoxRenderable,
+  TextRenderable,
+  InputRenderableEvents,
+  type CliRenderer,
+  type KeyEvent,
+} from "@opentui/core";
+import { OutputBuffer } from "./output";
+import { streamEvents, renderEvent, type StreamHandle } from "./stream";
+import type { RalphEvent } from "../../cli/agents/events";
+import type { Job, JobStatus } from "./state";
+import type { RalphClient } from "./client";
+
+export interface BootViewCallbacks {
+  onBack: () => void;
+  onJobStatusChange: (bootId: string, status: JobStatus, runId?: string) => void;
+}
+
+export interface BootViewHandle {
+  mount: () => void;
+  unmount: () => void;
+  startStreaming: (runId: string) => void;
+}
+
+export function createBootView(
+  renderer: CliRenderer,
+  serverUrl: string,
+  job: Job,
+  runId: string,
+  client: RalphClient,
+  callbacks: BootViewCallbacks,
+): BootViewHandle {
+  const promptPreview = job.prompt.length > 40
+    ? job.prompt.slice(0, 40) + "..."
+    : job.prompt;
+
+  const root = new BoxRenderable(renderer, {
+    id: "boot-view-root",
+    flexDirection: "column",
+    width: "100%",
+    height: "100%",
+  });
+
+  const navBar = new BoxRenderable(renderer, {
+    id: "boot-view-nav",
+    height: 1,
+    width: "100%",
+  });
+  const navText = new TextRenderable(renderer, {
+    id: "boot-view-nav-text",
+    content: `[Esc] Back  |  Boot: ${promptPreview}`,
+  });
+  navBar.add(navText);
+
+  const output = new ScrollBoxRenderable(renderer, {
+    id: "boot-view-output",
+    flexGrow: 1,
+    border: true,
+    borderStyle: "rounded",
+    title: " nightshift ",
+    stickyScroll: true,
+    stickyStart: "bottom",
+  });
+
+  const inputBar = new BoxRenderable(renderer, {
+    id: "boot-view-input-bar",
+    height: 3,
+    border: true,
+    borderStyle: "rounded",
+    title: " prompt ",
+  });
+  const input = new InputRenderable(renderer, {
+    id: "boot-view-input",
+    placeholder: "Type a follow-up prompt and press Enter...",
+    flexGrow: 1,
+  });
+  inputBar.add(input);
+
+  root.add(navBar);
+  root.add(output);
+  root.add(inputBar);
+
+  const buf = new OutputBuffer(renderer, output);
+  let activeStream: StreamHandle | null = null;
+  let pastedPrompt: string | null = null;
+  let mounted = false;
+
+  function setRunningUI(isRunning: boolean) {
+    if (isRunning) {
+      input.blur();
+      inputBar.title = " running... ";
+    } else {
+      input.focus();
+      inputBar.title = " prompt ";
+    }
+  }
+
+  function onStreamEnd() {
+    if (!mounted) return;
+    activeStream = null;
+    setRunningUI(false);
+  }
+
+  async function submit(prompt: string) {
+    if (activeStream || !prompt.trim()) return;
+    setRunningUI(true);
+
+    buf.appendLine(`\n> ${prompt}`);
+    buf.appendLine("");
+
+    try {
+      const id = await client.submitPrompt(prompt, job.id);
+      callbacks.onJobStatusChange(job.id, "running", id);
+      activeStream = streamEvents(serverUrl, id, buf, { onEnd: onStreamEnd });
+    } catch (err) {
+      buf.appendLine(`[error] ${err}`);
+      callbacks.onJobStatusChange(job.id, "error");
+      setRunningUI(false);
+    }
+  }
+
+  function onEnter() {
+    if (activeStream) return;
+    const value = pastedPrompt ?? input.value;
+    pastedPrompt = null;
+    input.value = "";
+    input.placeholder = "Type a follow-up prompt and press Enter...";
+    submit(value);
+  }
+
+  function onPaste(event: { preventDefault: () => void; text: string }) {
+    event.preventDefault();
+    const text = event.text;
+    const lines = text.split("\n");
+
+    if (lines.length <= 1) {
+      input.insertText(text);
+      return;
+    }
+
+    pastedPrompt = text;
+    input.value = `[Pasted ${lines.length} lines]`;
+    input.placeholder = "Press Enter to submit pasted prompt, or Esc to clear";
+  }
+
+  function onKeypress(key: KeyEvent) {
+    if (key.name === "escape") {
+      if (pastedPrompt) {
+        pastedPrompt = null;
+        input.value = "";
+        input.placeholder = "Type a follow-up prompt and press Enter...";
+        return;
+      }
+      callbacks.onBack();
+    }
+  }
+
+  function beginStreaming(runId: string) {
+    if (activeStream) return;
+    setRunningUI(true);
+    activeStream = streamEvents(serverUrl, runId, buf, { onEnd: onStreamEnd });
+  }
+
+  return {
+    mount() {
+      mounted = true;
+      renderer.root.add(root);
+      input.on(InputRenderableEvents.ENTER, onEnter);
+      input.onPaste = onPaste;
+      renderer.keyInput.on("keypress", onKeypress);
+
+      if (runId) {
+        // Immediately reflect known status in UI
+        const isActive = runId === job.runId;
+        setRunningUI(isActive && job.status === "running");
+
+        (async () => {
+          let hasTerminal = false;
+          try {
+            const res = await fetch(`${serverUrl}/runs/${runId}/events`);
+            if (res.ok) {
+              const events: RalphEvent[] = await res.json();
+              for (const event of events) {
+                renderEvent(event, buf);
+                if (
+                  event.type === "ralph.completed" ||
+                  event.type === "ralph.error" ||
+                  event.type === "ralph.interrupted"
+                ) {
+                  hasTerminal = true;
+                }
+              }
+              buf.flush();
+            }
+          } catch {}
+
+          if (!mounted) return;
+
+          if (hasTerminal) {
+            setRunningUI(false);
+          } else if (isActive) {
+            beginStreaming(runId);
+          }
+        })();
+      } else {
+        input.focus();
+      }
+    },
+    unmount() {
+      mounted = false;
+      activeStream?.abort();
+      activeStream = null;
+      renderer.keyInput.removeListener("keypress", onKeypress);
+      input.removeListener(InputRenderableEvents.ENTER, onEnter);
+      renderer.root.remove("boot-view-root");
+    },
+    startStreaming(runId: string) {
+      beginStreaming(runId);
+    },
+  };
+}
