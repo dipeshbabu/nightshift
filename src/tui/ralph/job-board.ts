@@ -4,6 +4,7 @@ import {
   SelectRenderable,
   TextareaRenderable,
   SelectRenderableEvents,
+  t, bold, red, dim,
   type CliRenderer,
   type KeyEvent,
 } from "@opentui/core";
@@ -195,12 +196,50 @@ export function createJobBoard(
     hideEditor();
   }
 
+  let confirmAction: { type: "delete"; jobId: string } | { type: "quit" } | null = null;
+
+  function showConfirm(action: typeof confirmAction) {
+    confirmAction = action;
+    if (action?.type === "delete") {
+      const job = state.jobs.find((j) => j.id === action.jobId);
+      if (!job) { confirmAction = null; return; }
+      const preview = job.prompt.length > 40 ? job.prompt.slice(0, 40) + "..." : job.prompt;
+      helpText.content = t`${red(bold("Delete"))} ${dim(`"${preview}"`)}? ${bold("y")}/${bold("n")}`;
+    } else if (action?.type === "quit") {
+      helpText.content = t`Are you sure you want to quit Nightshift? ${bold("y")}/${bold("n")}`;
+    }
+  }
+
+  function hideConfirm() {
+    confirmAction = null;
+    helpText.content = LIST_HELP;
+  }
+
   function getSelectedJobId(): string | null {
     const opt = jobList.getSelectedOption();
     return opt?.value ?? null;
   }
 
   function onKeypress(key: KeyEvent) {
+    // Confirm dialog intercepts all keys
+    if (confirmAction) {
+      if (key.name === "y") {
+        if (confirmAction.type === "delete") {
+          const id = confirmAction.jobId;
+          client.deleteJob(id);
+          state.jobs = state.jobs.filter((j) => j.id !== id);
+          hideConfirm();
+          refresh();
+        } else if (confirmAction.type === "quit") {
+          hideConfirm();
+          callbacks.onQuit();
+        }
+      } else if (key.name === "n" || key.name === "escape") {
+        hideConfirm();
+      }
+      return;
+    }
+
     if (state.boardFocus === "editor") {
       // Ctrl+S to save
       if (key.name === "s" && key.ctrl) {
@@ -251,16 +290,12 @@ export function createJobBoard(
 
     if (key.name === "d") {
       const id = getSelectedJobId();
-      if (id) {
-        client.deleteJob(id);
-        state.jobs = state.jobs.filter((j) => j.id !== id);
-        refresh();
-      }
+      if (id) showConfirm({ type: "delete", jobId: id });
       return;
     }
 
     if (key.name === "escape") {
-      callbacks.onQuit();
+      showConfirm({ type: "quit" });
       return;
     }
   }
