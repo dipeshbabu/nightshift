@@ -8,7 +8,7 @@ import { runEval } from "./cli/handlers/eval";
 import { upgrade } from "./cli/handlers/upgrade";
 
 function installCompleteMessage() {
-  console.log("Instalation complete")
+  console.log("Installation complete")
 }
 
 if (import.meta.main) {
