@@ -2,7 +2,7 @@ import { resolve, join } from "path";
 import { mkdirSync, existsSync } from "fs";
 import { detectPlatform } from "../../lib/platform";
 import { saveActivePrefix } from "../../lib/config";
-import { uvUrl, ripgrepUrl, opencodeUrl, installTool, installUvTools } from "../../lib/tools";
+import { uvUrl, ripgrepUrl, opencodeUrl, installTool, installUvTools, installRubyAndGollum } from "../../lib/tools";
 import { createWorkspaceScaffold, syncWorkspace } from "../../lib/workspace";
 import { WORKSPACE_PACKAGES, XDG_DIRS, AGENT_LIBRARY_NAME, WORKSPACE_DIRNAME } from "../../lib/constants";
 //import { bootstrapWithOpencode } from "../../lib/bootstrap";
@@ -81,6 +81,7 @@ export async function installTools(prefix: string): Promise<void> {
     ]);
 
     await installUvTools(prefix);
+    await installRubyAndGollum(prefix);
 
   } catch (err) {
     console.error("Failed to install tools:", err);
