@@ -2,6 +2,7 @@ import { join } from "path";
 import { mkdirSync } from "fs";
 import type { ScaffoldOptions } from "./types";
 import { buildUvEnv } from "./env";
+import { generateGollumConfig } from "../cli/agents/gollum";
 
 export function generateRootPyproject(libraryName: string, packages: string[]): string {
   const depsStr = packages.map((p) => `    "${p}",`).join("\n");
@@ -197,10 +198,12 @@ export async function createWorkspaceScaffold(
   console.log(`\nCreating workspace scaffold at ${workspacePath}...`);
   const snakeName = libraryName.replace(/-/g, "_");
   const srcDir = join(workspacePath, "src", snakeName);
+  const humansDir = join(workspacePath, "humans");
   const testsDir = join(workspacePath, "tests");
 
   mkdirSync(srcDir, { recursive: true });
   mkdirSync(testsDir, { recursive: true });
+  mkdirSync(humansDir, { recursive: true });
 
   await Bun.write(join(workspacePath, "pyproject.toml"), generateRootPyproject(libraryName, packages));
   await Bun.write(join(srcDir, "__init__.py"), `"""${libraryName} package."""\n`);
@@ -212,6 +215,7 @@ export async function createWorkspaceScaffold(
     await Bun.write(join(workspacePath, "AGENTS.md"), generateAgentsMd(libraryName));
   }
   await Bun.write(join(workspacePath, "opencode.json"), generateOpencodeConfig());
+  await Bun.write(join(workspacePath, "gollum_config.rb"), generateGollumConfig());
 
   console.log(`  Created workspace scaffold with library "${libraryName}"`);
 }

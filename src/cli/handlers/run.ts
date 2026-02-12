@@ -7,6 +7,7 @@ import { buildSandboxCommand, type SandboxOptions } from "../../lib/sandbox";
 import { startAgentServer } from "../agents/server";
 import { runAgentLoop } from "../agents/loop";
 import { createBus, taggedPublisher } from "../agents/bus";
+import { startGollumServer } from "../agents/gollum";
 import { createWorktree, mergeMainIntoWorktree, mergeWorktreeIntoMain, removeWorktree, abortMerge, withMergeLock, pruneStaleWorktrees } from "../agents/worktree";
 import { resolve as resolveConflicts } from "../agents/resolver";
 import type { RalphEvent } from "../agents/events";
@@ -65,7 +66,6 @@ export interface RalphOptions {
   servePort?: number;
 }
 
-// --- Self-spawn helper for compiled binary compatibility ---
 
 /** Build the command to re-invoke the current process (works in both dev and compiled mode). */
 function getSelfCommand(): string[] {
@@ -80,7 +80,6 @@ function getSelfCommand(): string[] {
   return [process.execPath];
 }
 
-// --- Ralph daemon PID file helpers (mirrors pattern from server.ts) ---
 
 function ralphPidPath(prefix: string): string {
   return join(prefix, "run", "ralph-server.json");
@@ -103,7 +102,7 @@ function writeRalphPid(prefix: string, pid: number, port: number): void {
 }
 
 function removeRalphPid(prefix: string): void {
-  try { unlinkSync(ralphPidPath(prefix)); } catch {}
+  try { unlinkSync(ralphPidPath(prefix)); } catch { }
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -183,7 +182,7 @@ export async function run(prefix: string, args: string[], useNightshiftTui: bool
 
   if (useNightshiftTui) {
     // Start opencode as a server and attach nightshift TUI
-    await runWithNightshiftTui(opencode, PATH, workspacePath, args, xdgEnv, sandboxEnabled, sandboxOpts);
+    //await runWithNightshiftTui(opencode, PATH, workspacePath, args, xdgEnv, sandboxEnabled, sandboxOpts);
   } else {
     // Standard opencode execution
     console.log(`Launching opencode with isolated PATH`);
@@ -315,7 +314,7 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
           reused = true;
         } else {
           // Stale — process alive but unhealthy, clean up
-          try { process.kill(existing.pid); } catch {}
+          try { process.kill(existing.pid); } catch { }
           removeRalphPid(prefix);
         }
       } else if (existing) {
@@ -328,6 +327,7 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
         // We re-invoke ourselves with the hidden _ralph-daemon subcommand
         // so this works in both dev mode (bun run src/index.ts) and compiled binaries.
         const selfCmd = getSelfCommand();
+        const gollumPort = port + 1;
         const daemonProc = Bun.spawn([
           ...selfCmd, "_ralph-daemon",
           "--prefix", prefix,
@@ -335,6 +335,7 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
           "--workspace", workspacePath,
           "--agent-model", agentModel,
           "--eval-model", evalModel,
+          "--gollum-port", String(gollumPort),
         ], {
           stdout: Bun.file(logPath),
           stderr: Bun.file(logPath),
@@ -369,9 +370,16 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
       process.exit(0);
     }
 
-    // Non-TUI serve mode: run in-process
+    // Non-TUI serve run in-process
     const worktreesDir = join(prefix, "worktrees");
     mkdirSync(worktreesDir, { recursive: true });
+
+    // Start Gollum file viewer
+    await startGollumServer({
+      prefix,
+      workspace: workspacePath,
+      port: port + 1,
+    });
 
     // Prune stale worktrees left behind by a previous crash
     await pruneStaleWorktrees(workspacePath, worktreesDir);
@@ -555,7 +563,7 @@ async function waitForRalphServer(serverUrl: string, maxAttempts = 60): Promise<
     try {
       const res = await fetch(`${serverUrl}/health`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) return;
-    } catch {}
+    } catch { }
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error("Ralph server daemon failed to start within timeout");

@@ -1,7 +1,7 @@
 import { join, relative } from "path";
-import { mkdirSync, existsSync, chmodSync, symlinkSync } from "fs";
+import { mkdirSync, existsSync, chmodSync, symlinkSync, unlinkSync } from "fs";
 import type { Platform, BinaryMapping } from "./types";
-import { OPENCODE_VERSION, UV_VERSION, RIPGREP_VERSION } from "./constants";
+import { OPENCODE_VERSION, UV_VERSION, RIPGREP_VERSION, RUBY_VERSION } from "./constants";
 import { download, extract } from "./download";
 import { buildUvEnv } from "./env";
 
@@ -83,6 +83,64 @@ export async function installTool(
   // Clean up archive
   const { unlinkSync } = await import("fs");
   unlinkSync(archivePath);
+}
+
+export function portableRubyUrl(p: Platform): { url: string; extractedBinary: string } {
+  const base = `https://github.com/Homebrew/homebrew-portable-ruby/releases/download/${RUBY_VERSION}`;
+  const asset =
+    p.os === "darwin" && p.arch === "aarch64"
+      ? `portable-ruby-${RUBY_VERSION}.arm64_big_sur.bottle.tar.gz`
+      : p.os === "darwin" && p.arch === "x86_64"
+        ? `portable-ruby-${RUBY_VERSION}.el_capitan.bottle.tar.gz`
+        : p.os === "linux" && p.arch === "x86_64"
+          ? `portable-ruby-${RUBY_VERSION}.x86_64_linux.bottle.tar.gz`
+          : `portable-ruby-${RUBY_VERSION}.arm64_linux.bottle.tar.gz`;
+  return {
+    url: `${base}/${asset}`,
+    extractedBinary: `portable-ruby/${RUBY_VERSION}/bin/ruby`,
+  };
+}
+
+export async function installRubyAndGollum(prefix: string): Promise<void> {
+  const platform = (await import("./platform")).detectPlatform();
+  const ruby = portableRubyUrl(platform);
+
+  await installTool("ruby", ruby.url, prefix, [
+    { linkName: "ruby", target: `portable-ruby/${RUBY_VERSION}/bin/ruby` },
+    { linkName: "gem", target: `portable-ruby/${RUBY_VERSION}/bin/gem` },
+  ]);
+
+  console.log("\nInstalling gollum gem...");
+  const gemBin = join(prefix, "bin", "gem");
+  const gemHome = join(prefix, "gems");
+  mkdirSync(gemHome, { recursive: true });
+
+  const proc = Bun.spawn([gemBin, "install", "gollum"], {
+    stdout: "inherit",
+    stderr: "inherit",
+    env: {
+      ...process.env,
+      GEM_HOME: gemHome,
+      PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
+    },
+  });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) throw new Error(`gem install gollum failed (${exitCode})`);
+
+  // Symlink gollum binary from gems/bin into prefix/bin
+  const gollumSrc = join(gemHome, "bin", "gollum");
+  const gollumLink = join(prefix, "bin", "gollum");
+  if (existsSync(gollumSrc)) {
+    if (existsSync(gollumLink)) {
+      unlinkSync(gollumLink);
+    }
+    const relTarget = relative(join(prefix, "bin"), gollumSrc);
+    symlinkSync(relTarget, gollumLink);
+    console.log(`  Linked gollum → ${relTarget}`);
+  } else {
+    console.warn(`  Warning: gollum binary not found at ${gollumSrc}`);
+  }
+  console.log("  gollum installed successfully.");
 }
 
 export async function installUvTools(prefix: string): Promise<void> {

@@ -8,6 +8,7 @@ export function resolverPrompt(conflicts: string): string {
 5. \`git commit\` to complete the merge
 
 Do not modify any logic beyond what's needed to resolve conflicts.
+NEVER ASK QUESTIONS. WORK UNTIL IT'S DONE.
 Do not refactor, improve, or change behavior. Only resolve the merge.
 
 ## Conflicted Files

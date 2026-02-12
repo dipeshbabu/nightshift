@@ -20,18 +20,21 @@ import {
   pruneStaleWorktrees,
 } from "./worktree";
 import { resolve as resolveConflicts } from "./resolver";
+import { startGollumServer } from "./gollum";
 
 function parseArgs(argv: string[]) {
   const get = (flag: string): string | undefined => {
     const idx = argv.indexOf(flag);
     return idx >= 0 && idx + 1 < argv.length ? argv[idx + 1] : undefined;
   };
+  const port = Number(get("--port") ?? 3000);
   return {
     prefix: get("--prefix")!,
-    port: Number(get("--port") ?? 3000),
+    port,
     workspace: get("--workspace")!,
     agentModel: get("--agent-model") ?? "openai/gpt-5.2-codex",
     evalModel: get("--eval-model") ?? "openai/gpt-5.2-codex",
+    gollumPort: Number(get("--gollum-port") ?? port + 1),
   };
 }
 
@@ -42,7 +45,7 @@ export async function runRalphDaemon(argv: string[]) {
     process.exit(1);
   }
 
-  const { prefix, port, workspace, agentModel, evalModel } = args;
+  const { prefix, port, workspace, agentModel, evalModel, gollumPort } = args;
   const logDir = join(prefix, "agent_logs");
   const worktreesDir = join(prefix, "worktrees");
   mkdirSync(logDir, { recursive: true });
@@ -52,6 +55,14 @@ export async function runRalphDaemon(argv: string[]) {
 
   // Track active agent server handles so we can kill them on shutdown
   const activeHandles = new Set<{ kill: () => void }>();
+
+  // Start Gollum file viewer alongside the Ralph server
+  const gollumHandle = await startGollumServer({
+    prefix,
+    workspace,
+    port: gollumPort,
+  });
+  activeHandles.add(gollumHandle);
 
   process.on("exit", () => {
     for (const handle of activeHandles) {
