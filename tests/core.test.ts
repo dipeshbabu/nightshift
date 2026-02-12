@@ -2,6 +2,7 @@ import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { join as posixJoin } from "path/posix";
+import { tmpdir } from "os";
 import { buildBootstrapPrompt } from "../src/lib/bootstrap";
 import { buildPath, buildXdgEnv } from "../src/lib/env";
 import { waitForServer } from "../src/lib/server";
@@ -63,7 +64,7 @@ describe("buildBootstrapPrompt", () => {
 });
 
 describe("buildPath", () => {
-  const testPrefix = "/tmp/nightshift-test-buildpath";
+  const testPrefix = join(tmpdir(), "nightshift-test-buildpath");
 
   beforeEach(() => {
     // Clean up before each test

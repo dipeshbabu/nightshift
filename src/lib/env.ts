@@ -1,7 +1,7 @@
-import { join } from "path";
+import { join, delimiter } from "path";
 import { existsSync } from "fs";
 
-function posixPath(p: string): string {
+export function posixPath(p: string): string {
   return p.replace(/\\/g, "/");
 }
 
@@ -26,5 +26,5 @@ export function buildPath(prefix: string): string {
   const uvToolsBin = join(prefix, "uv-tools", "bin");
   let pathParts = [binDir];
   if (existsSync(uvToolsBin)) pathParts.unshift(uvToolsBin);
-  return `${pathParts.join(":")}:${process.env.PATH ?? ""}`;
+  return `${pathParts.join(delimiter)}${delimiter}${process.env.PATH ?? ""}`;
 }

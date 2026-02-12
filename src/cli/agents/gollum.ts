@@ -3,7 +3,8 @@
  *
  * Follows the same PID-file pattern used by server.ts and run.ts.
  */
-import { join } from "path";
+import { join, delimiter } from "path";
+import { posixPath } from "../../lib/env";
 import { mkdirSync, unlinkSync } from "fs";
 import type { Subprocess } from "bun";
 
@@ -111,8 +112,8 @@ export async function startGollumServer(opts: {
       stderr: "pipe",
       env: {
         ...process.env,
-        GEM_HOME: gemHome,
-        PATH: `${join(prefix, "bin")}:${process.env.PATH}`,
+        GEM_HOME: posixPath(gemHome),
+        PATH: `${posixPath(join(prefix, "bin"))}${delimiter}${process.env.PATH}`,
       },
     },
   );
