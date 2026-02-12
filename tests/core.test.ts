@@ -1,6 +1,7 @@
 import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import { join as posixJoin } from "path/posix";
 import { buildBootstrapPrompt } from "../src/lib/bootstrap";
 import { buildPath, buildXdgEnv } from "../src/lib/env";
 import { waitForServer } from "../src/lib/server";
@@ -122,10 +123,10 @@ describe("buildXdgEnv", () => {
     const prefix = "/home/user/.nightshift";
     const env = buildXdgEnv(prefix);
 
-    expect(env.XDG_CONFIG_HOME).toBe(join(prefix, "config"));
-    expect(env.XDG_DATA_HOME).toBe(join(prefix, "share"));
-    expect(env.XDG_CACHE_HOME).toBe(join(prefix, "cache"));
-    expect(env.XDG_STATE_HOME).toBe(join(prefix, "state"));
+    expect(env.XDG_CONFIG_HOME).toBe(posixJoin(prefix, "config"));
+    expect(env.XDG_DATA_HOME).toBe(posixJoin(prefix, "share"));
+    expect(env.XDG_CACHE_HOME).toBe(posixJoin(prefix, "cache"));
+    expect(env.XDG_STATE_HOME).toBe(posixJoin(prefix, "state"));
   });
 });
 
