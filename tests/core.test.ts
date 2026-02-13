@@ -28,10 +28,11 @@ describe("checkPrefixTools", () => {
     expect(missing).toContain("ruby");
     expect(missing).toContain("gem");
     expect(missing).toContain("gollum");
+    expect(missing).toContain("cmake");
   });
 
   test("reports no missing tools when all binaries exist", () => {
-    for (const bin of ["opencode", "uv", "rg", "ruby", "gem", "gollum"]) {
+    for (const bin of ["opencode", "uv", "rg", "ruby", "gem", "gollum", "cmake"]) {
       writeFileSync(join(testPrefix, "bin", bin), "");
     }
     const missing = checkPrefixTools(testPrefix);
@@ -44,7 +45,7 @@ describe("checkPrefixTools", () => {
       writeFileSync(join(testPrefix, "bin", bin), "");
     }
     const missing = checkPrefixTools(testPrefix);
-    expect(missing).toEqual(["ruby", "gem", "gollum"]);
+    expect(missing).toEqual(["ruby", "gem", "gollum", "cmake"]);
   });
 });
 
@@ -68,7 +69,7 @@ describe("ensurePrefixTools", () => {
   });
 
   test("does nothing when all tools are present", async () => {
-    for (const bin of ["opencode", "uv", "rg", "ruby", "gem", "gollum"]) {
+    for (const bin of ["opencode", "uv", "rg", "ruby", "gem", "gollum", "cmake"]) {
       writeFileSync(join(testPrefix, "bin", bin), "");
     }
     // Should resolve without throwing or installing anything
@@ -85,7 +86,7 @@ describe("ensurePrefixTools", () => {
     const fakeInstaller = async (prefix: string) => {
       installCalled = true;
       // Simulate what installRubyAndGollum produces
-      for (const bin of ["ruby", "gem", "gollum"]) {
+      for (const bin of ["ruby", "gem", "gollum", "cmake"]) {
         writeFileSync(join(prefix, "bin", bin), "");
       }
     };
