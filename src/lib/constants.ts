@@ -1,6 +1,7 @@
 export const OPENCODE_VERSION = "v1.1.37";
 export const UV_VERSION = "0.9.27";
 export const RIPGREP_VERSION = "15.1.0";
+export const CMAKE_VERSION = "4.2.3";
 export const RUBY_VERSION = "3.3.7";
 export const WORKSPACE_PACKAGES = ["numpy", "pandas", "matplotlib", "scikit-learn", "jupyter"];
 export const XDG_DIRS = ["config", "share", "cache", "state"];

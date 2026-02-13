@@ -4,7 +4,7 @@ import { join } from "path";
 import { mkdtemp, rm } from "fs/promises";
 import { configSearchPaths, expandHome, readFullConfig, saveActivePrefix } from "../src/lib/config";
 import { detectPlatform, checkSandboxAvailability } from "../src/lib/platform";
-import { opencodeUrl } from "../src/lib/tools";
+import { opencodeUrl, cmakeUrl } from "../src/lib/tools";
 import { extractExtraArgs, resolveRunOptions, buildAttachTuiArgs } from "../src/cli/handlers/run";
 import { buildXdgEnv, buildUvEnv } from "../src/lib/env";
 import {
@@ -54,6 +54,39 @@ test("opencodeUrl encodes platform data", () => {
   const linux = opencodeUrl({ os: "linux", arch: "x86_64" });
   expect(linux.url).toContain("opencode-linux-x64.tar.gz");
 });
+
+test("cmakeUrl returns universal binary for macOS", () => {
+  const darwinArm = cmakeUrl({ os: "darwin", arch: "aarch64" });
+  expect(darwinArm.url).toContain("cmake-4.2.3-macos-universal.tar.gz");
+  expect(darwinArm.extractedBinary).toContain("CMake.app/Contents/bin/cmake");
+
+  const darwinX86 = cmakeUrl({ os: "darwin", arch: "x86_64" });
+  expect(darwinX86.url).toBe(darwinArm.url);
+  expect(darwinX86.extractedBinary).toBe(darwinArm.extractedBinary);
+});
+
+test("cmakeUrl returns arch-specific binary for Linux", () => {
+  const linuxX86 = cmakeUrl({ os: "linux", arch: "x86_64" });
+  expect(linuxX86.url).toContain("cmake-4.2.3-linux-x86_64.tar.gz");
+  expect(linuxX86.extractedBinary).toBe("cmake-4.2.3-linux-x86_64/bin/cmake");
+
+  const linuxArm = cmakeUrl({ os: "linux", arch: "aarch64" });
+  expect(linuxArm.url).toContain("cmake-4.2.3-linux-aarch64.tar.gz");
+  expect(linuxArm.extractedBinary).toBe("cmake-4.2.3-linux-aarch64/bin/cmake");
+});
+
+test("cmakeUrl points to valid GitHub release URLs", async () => {
+  const platforms = [
+    { os: "darwin" as const, arch: "aarch64" as const },
+    { os: "linux" as const, arch: "x86_64" as const },
+    { os: "linux" as const, arch: "aarch64" as const },
+  ];
+  for (const p of platforms) {
+    const { url } = cmakeUrl(p);
+    const res = await fetch(url, { method: "HEAD", redirect: "follow" });
+    expect(res.ok).toBe(true);
+  }
+}, 15_000);
 
 test("extractExtraArgs returns args after --", () => {
   expect(extractExtraArgs(["bun", "src/index.ts"])).toEqual([]);

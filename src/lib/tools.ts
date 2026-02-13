@@ -1,7 +1,7 @@
 import { join, relative, delimiter } from "path";
 import { mkdirSync, existsSync, chmodSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
 import type { Platform, BinaryMapping } from "./types";
-import { OPENCODE_VERSION, UV_VERSION, RIPGREP_VERSION, RUBY_VERSION } from "./constants";
+import { OPENCODE_VERSION, UV_VERSION, RIPGREP_VERSION, RUBY_VERSION, CMAKE_VERSION } from "./constants";
 import { download, extract } from "./download";
 import { buildUvEnv } from "./env";
 
@@ -162,6 +162,21 @@ export async function installTool(
   unlinkSync(archivePath);
 }
 
+export function cmakeUrl(p: Platform): { url: string; extractedBinary: string } {
+  const base = `https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}`;
+  if (p.os === "darwin") {
+    return {
+      url: `${base}/cmake-${CMAKE_VERSION}-macos-universal.tar.gz`,
+      extractedBinary: `cmake-${CMAKE_VERSION}-macos-universal/CMake.app/Contents/bin/cmake`,
+    };
+  }
+  const arch = p.arch === "aarch64" ? "aarch64" : "x86_64";
+  return {
+    url: `${base}/cmake-${CMAKE_VERSION}-linux-${arch}.tar.gz`,
+    extractedBinary: `cmake-${CMAKE_VERSION}-linux-${arch}/bin/cmake`,
+  };
+}
+
 export function portableRubyUrl(p: Platform): { url: string; extractedBinary: string } {
   const base = `https://github.com/Homebrew/homebrew-portable-ruby/releases/download/${RUBY_VERSION}`;
   const asset =
@@ -187,6 +202,12 @@ export async function installRubyAndGollum(prefix: string): Promise<void> {
     { linkName: "gem", target: `portable-ruby/${RUBY_VERSION}/bin/gem` },
   ]);
 
+  // cmake is required to compile Rugged's native extension (libgit2).
+  const cmake = cmakeUrl(platform);
+  await installTool("cmake", cmake.url, prefix, [
+    { linkName: "cmake", target: cmake.extractedBinary },
+  ]);
+
   // Rugged (gollum dependency) requires pkg-config to build native extensions.
   // Install a self-contained shim so we don't need brew/apt-get.
   installPkgConfigShim(prefix);
@@ -196,6 +217,10 @@ export async function installRubyAndGollum(prefix: string): Promise<void> {
   const gemHome = join(prefix, "gems");
   mkdirSync(gemHome, { recursive: true });
 
+  // Disable HTTPS in libgit2 (built by Rugged's native extension).
+  // OpenSSL 3 (Ubuntu 22.04+) removed the MD4 symbol that Rugged links against,
+  // causing "undefined symbol: MD4" at runtime on Linux. Gollum only reads local
+  // repos so HTTPS support is unnecessary.
   const proc = Bun.spawn(
     [gemBin, "install", "gollum"],
     {
@@ -204,6 +229,7 @@ export async function installRubyAndGollum(prefix: string): Promise<void> {
       env: {
         ...process.env,
         GEM_HOME: gemHome,
+        CMAKE_FLAGS: "-DUSE_HTTPS=OFF",
         PATH: `${join(prefix, "bin")}${delimiter}${process.env.PATH}`,
       },
     },
@@ -233,7 +259,7 @@ export async function installRubyAndGollum(prefix: string): Promise<void> {
  */
 export function checkPrefixTools(prefix: string): string[] {
   const binDir = join(prefix, "bin");
-  const required = ["opencode", "uv", "rg", "ruby", "gem", "gollum"];
+  const required = ["opencode", "uv", "rg", "ruby", "gem", "gollum", "cmake"];
   return required.filter((bin) => !existsSync(join(binDir, bin)));
 }
 
@@ -264,7 +290,7 @@ export async function ensurePrefixTools(
   }
 
   // Ruby / gollum can be installed on the fly.
-  const gollumTools = ["ruby", "gem", "gollum"];
+  const gollumTools = ["ruby", "gem", "gollum", "cmake"];
   if (gollumTools.some((t) => missing.includes(t))) {
     console.log(`Upgrading prefix: installing missing tools (${missing.join(", ")})...`);
     const installer = opts?.installGollum ?? installRubyAndGollum;
