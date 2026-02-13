@@ -1,11 +1,80 @@
 import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync, symlinkSync } from "fs";
 import { join } from "path";
 import { join as posixJoin } from "path/posix";
 import { tmpdir } from "os";
 import { buildBootstrapPrompt } from "../src/lib/bootstrap";
 import { buildPath, buildXdgEnv } from "../src/lib/env";
 import { waitForServer } from "../src/lib/server";
+import { checkPrefixTools, ensurePrefixTools } from "../src/lib/tools";
+
+describe("checkPrefixTools", () => {
+  const testPrefix = join(tmpdir(), "nightshift-test-prefixtools");
+
+  beforeEach(() => {
+    rmSync(testPrefix, { recursive: true, force: true });
+    mkdirSync(join(testPrefix, "bin"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testPrefix, { recursive: true, force: true });
+  });
+
+  test("reports all tools missing when bin is empty", () => {
+    const missing = checkPrefixTools(testPrefix);
+    expect(missing).toContain("opencode");
+    expect(missing).toContain("uv");
+    expect(missing).toContain("rg");
+    expect(missing).toContain("ruby");
+    expect(missing).toContain("gem");
+    expect(missing).toContain("gollum");
+  });
+
+  test("reports no missing tools when all binaries exist", () => {
+    for (const bin of ["opencode", "uv", "rg", "ruby", "gem", "gollum"]) {
+      writeFileSync(join(testPrefix, "bin", bin), "");
+    }
+    const missing = checkPrefixTools(testPrefix);
+    expect(missing).toHaveLength(0);
+  });
+
+  test("reports only gollum-related tools missing for pre-v0.1.4 prefix", () => {
+    // Simulate a pre-v0.1.4 prefix that has core tools but no gollum
+    for (const bin of ["opencode", "uv", "rg"]) {
+      writeFileSync(join(testPrefix, "bin", bin), "");
+    }
+    const missing = checkPrefixTools(testPrefix);
+    expect(missing).toEqual(["ruby", "gem", "gollum"]);
+  });
+});
+
+describe("ensurePrefixTools", () => {
+  const testPrefix = join(tmpdir(), "nightshift-test-ensuretools");
+
+  beforeEach(() => {
+    rmSync(testPrefix, { recursive: true, force: true });
+    mkdirSync(join(testPrefix, "bin"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testPrefix, { recursive: true, force: true });
+  });
+
+  test("throws for missing core tools", async () => {
+    // Empty prefix — core tools missing
+    await expect(ensurePrefixTools(testPrefix)).rejects.toThrow(
+      /Core tools missing from prefix/,
+    );
+  });
+
+  test("does nothing when all tools are present", async () => {
+    for (const bin of ["opencode", "uv", "rg", "ruby", "gem", "gollum"]) {
+      writeFileSync(join(testPrefix, "bin", bin), "");
+    }
+    // Should resolve without throwing or installing anything
+    await ensurePrefixTools(testPrefix);
+  });
+});
 
 describe("buildBootstrapPrompt", () => {
   test("includes user intent in prompt", () => {
