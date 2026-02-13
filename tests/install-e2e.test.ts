@@ -48,7 +48,9 @@ describe.skipIf(!process.env.E2E)("e2e: installRubyAndGollum", () => {
     const workspace = join(prefix, "workspace");
     mkdirSync(workspace, { recursive: true });
     writeFileSync(join(workspace, "README.md"), "# Test Workspace\n");
-    await Bun.spawn(["git", "init"], { cwd: workspace, stdout: "pipe", stderr: "pipe" }).exited;
+    await Bun.spawn(["git", "init", "-b", "main"], { cwd: workspace, stdout: "pipe", stderr: "pipe" }).exited;
+    await Bun.spawn(["git", "config", "user.email", "test@test.com"], { cwd: workspace, stdout: "pipe", stderr: "pipe" }).exited;
+    await Bun.spawn(["git", "config", "user.name", "Test"], { cwd: workspace, stdout: "pipe", stderr: "pipe" }).exited;
     await Bun.spawn(["git", "add", "-A"], { cwd: workspace, stdout: "pipe", stderr: "pipe" }).exited;
     await Bun.spawn(["git", "commit", "-m", "initial"], { cwd: workspace, stdout: "pipe", stderr: "pipe" }).exited;
 
