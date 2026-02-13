@@ -58,6 +58,7 @@ export function generateGollumConfig(): string {
 Precious::App.set(:wiki_options, {
   index_page: 'README',
   h1_title: true,
+  base_path: 'wiki',
 })
 `;
 }

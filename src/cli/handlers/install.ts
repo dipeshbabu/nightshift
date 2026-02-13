@@ -40,7 +40,7 @@ export async function createWorkspace(prefix: string): Promise<void> {
     // Init git repo and commit all scaffold files so they're tracked.
     // This prevents "untracked working tree files would be overwritten"
     // errors when merging task branches back into main.
-    await Bun.spawn(["git", "init"], { cwd: workspacePath, stdout: "pipe", stderr: "pipe" }).exited;
+    await Bun.spawn(["git", "init", "-b", "main"], { cwd: workspacePath, stdout: "pipe", stderr: "pipe" }).exited;
     await Bun.spawn(["git", "add", "-A"], { cwd: workspacePath, stdout: "pipe", stderr: "pipe" }).exited;
     await Bun.spawn(["git", "commit", "-m", "initial"], { cwd: workspacePath, stdout: "pipe", stderr: "pipe" }).exited;
 

@@ -42,6 +42,7 @@ test("generateGollumConfig returns valid ruby config", () => {
   expect(config).toContain("Precious::App.set(:wiki_options");
   expect(config).toContain("index_page: 'README'");
   expect(config).toContain("h1_title: true");
+  expect(config).toContain("base_path: 'wiki'");
 });
 
 // --- startGollumServer ---
