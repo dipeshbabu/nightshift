@@ -217,6 +217,10 @@ export async function installRubyAndGollum(prefix: string): Promise<void> {
   const gemHome = join(prefix, "gems");
   mkdirSync(gemHome, { recursive: true });
 
+  // Disable HTTPS in libgit2 (built by Rugged's native extension).
+  // OpenSSL 3 (Ubuntu 22.04+) removed the MD4 symbol that Rugged links against,
+  // causing "undefined symbol: MD4" at runtime on Linux. Gollum only reads local
+  // repos so HTTPS support is unnecessary.
   const proc = Bun.spawn(
     [gemBin, "install", "gollum"],
     {
@@ -225,6 +229,7 @@ export async function installRubyAndGollum(prefix: string): Promise<void> {
       env: {
         ...process.env,
         GEM_HOME: gemHome,
+        CMAKE_FLAGS: "-DUSE_HTTPS=OFF",
         PATH: `${join(prefix, "bin")}${delimiter}${process.env.PATH}`,
       },
     },
