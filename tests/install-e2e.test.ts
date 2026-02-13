@@ -59,20 +59,32 @@ describe.skipIf(!process.env.E2E)("e2e: installRubyAndGollum", () => {
     gollumHandle = await startGollumServer({ prefix, workspace, port: gollumPort });
     expect(gollumHandle.proc).not.toBeNull();
 
-    // Poll until the server is ready (gollum takes a moment to boot)
+    // Poll until the server is ready.
+    // Gollum (Ruby/Sinatra) can take 30s+ to boot on CI, so allow up to 90s.
+    const proc = gollumHandle.proc!;
     let res: Response | null = null;
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 90; i++) {
+      // Bail early if the process crashed.
+      if (proc.exitCode !== null) {
+        const stderr = await new Response(proc.stderr).text();
+        throw new Error(`gollum exited with code ${proc.exitCode}: ${stderr}`);
+      }
       try {
         res = await fetch(gollumHandle.url, { signal: AbortSignal.timeout(2000) });
         if (res.ok) break;
       } catch { }
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 1000));
     }
 
-    expect(res).not.toBeNull();
-    expect(res!.ok).toBe(true);
+    if (!res) {
+      // Capture stderr for CI debugging if the poll timed out.
+      const stderr = await new Response(proc.stderr).text();
+      throw new Error(`gollum never became ready (stderr: ${stderr})`);
+    }
 
-    const html = await res!.text();
+    expect(res.ok).toBe(true);
+
+    const html = await res.text();
     expect(html).toContain("Test Workspace");
-  }, 60_000);
+  }, 120_000);
 });
