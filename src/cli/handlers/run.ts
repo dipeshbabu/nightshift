@@ -4,6 +4,7 @@ import { checkSandboxAvailability } from "../../lib/platform";
 import { readFullConfig, expandHome } from "../../lib/config";
 import { buildXdgEnv, buildUvEnv } from "../../lib/env";
 import { buildSandboxCommand, type SandboxOptions } from "../../lib/sandbox";
+import { ensurePrefixTools } from "../../lib/tools";
 import { startAgentServer } from "../agents/server";
 import { runAgentLoop } from "../agents/loop";
 import { createBus, taggedPublisher } from "../agents/bus";
@@ -128,6 +129,10 @@ export async function run(prefix: string, args: string[], useNightshiftTui: bool
   const binDir = join(prefix, "bin");
   const uvToolsBin = join(prefix, "uv-tools", "bin");
   const opencode = join(binDir, "opencode");
+
+  // Ensure the prefix has all tools required by the current nightshift version.
+  // Older prefixes (pre-v0.1.4) may be missing gollum — this auto-installs it.
+  await ensurePrefixTools(prefix);
 
   if (!existsSync(opencode)) {
     throw new Error(`opencode not found at ${opencode}. Run install first.`);

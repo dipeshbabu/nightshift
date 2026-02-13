@@ -18,15 +18,14 @@ beforeEach(() => {
   mkdirSync(join(tmpDir, "runs"), { recursive: true });
   bus = createBus();
   caffinateExitCalls = 0;
-  const port = 10000 + Math.floor(Math.random() * 50000);
   server = startRalphServer({
-    port,
+    port: 0,
     bus,
     prefix: tmpDir,
     onPrompt: async () => {},
     onCaffinateExit: () => { caffinateExitCalls++; },
   });
-  client = new RalphClient(`http://localhost:${port}`);
+  client = new RalphClient(`http://localhost:${server.port}`);
 });
 
 afterEach(() => {

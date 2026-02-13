@@ -227,6 +227,53 @@ export async function installRubyAndGollum(prefix: string): Promise<void> {
   console.log("  gollum installed successfully.");
 }
 
+/**
+ * Check which required binaries are missing from a prefix's bin directory.
+ * Returns the list of missing binary names.
+ */
+export function checkPrefixTools(prefix: string): string[] {
+  const binDir = join(prefix, "bin");
+  const required = ["opencode", "uv", "rg", "ruby", "gem", "gollum"];
+  return required.filter((bin) => !existsSync(join(binDir, bin)));
+}
+
+/**
+ * Ensure a prefix has all tools required by the current nightshift version.
+ * Automatically installs missing tools when possible, allowing older prefixes
+ * to be transparently upgraded (e.g. adding gollum introduced in v0.1.4).
+ */
+export async function ensurePrefixTools(prefix: string): Promise<void> {
+  const missing = checkPrefixTools(prefix);
+  if (missing.length === 0) return;
+
+  // Core tools cannot be auto-installed — the user must re-run install.
+  const coreTools = ["opencode", "uv", "rg"];
+  const missingCore = coreTools.filter((t) => missing.includes(t));
+  if (missingCore.length > 0) {
+    throw new Error(
+      `Core tools missing from prefix: ${missingCore.join(", ")}. Run 'nightshift install --prefix <path>' to create a fresh prefix.`,
+    );
+  }
+
+  // Ruby / gollum can be installed on the fly.
+  const gollumTools = ["ruby", "gem", "gollum"];
+  if (gollumTools.some((t) => missing.includes(t))) {
+    console.log(`Upgrading prefix: installing missing tools (${missing.join(", ")})...`);
+    await installRubyAndGollum(prefix);
+  }
+
+  // Verify everything is in place after install.
+  const stillMissing = checkPrefixTools(prefix);
+  if (stillMissing.length > 0) {
+    throw new Error(
+      `Prefix is still missing tools after upgrade: ${stillMissing.join(", ")}. ` +
+      `Run 'nightshift install --prefix <path>' to create a fresh prefix.`,
+    );
+  }
+
+  console.log("Prefix upgrade complete.");
+}
+
 export async function installUvTools(prefix: string): Promise<void> {
   console.log(`\nInstalling uv tools...`);
   const uv = join(prefix, "bin", "uv");
