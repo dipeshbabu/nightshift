@@ -41,7 +41,7 @@ function getRunStatus(runsDir: string, runId: string): RunStatus {
     if (event.type === "ralph.completed") return "completed";
     if (event.type === "ralph.error") return "error";
     if (event.type === "ralph.interrupted") return "interrupted";
-  } catch {}
+  } catch { }
   return "running";
 }
 
@@ -66,7 +66,7 @@ function listJobFiles(jobsDir: string): JobFile[] {
   for (const f of files) {
     try {
       jobs.push(JSON.parse(readFileSync(join(jobsDir, f), "utf-8")));
-    } catch {}
+    } catch { }
   }
   return jobs.sort((a, b) => a.createdAt - b.createdAt);
 }
@@ -161,8 +161,6 @@ export function startRalphServer(opts: RalphServerOptions) {
         },
         OPTIONS: () => new Response(null, { status: 204, headers: CORS_HEADERS }),
       },
-
-      // --- Job CRUD ---
       "/jobs": {
         GET: () => {
           const jobs = listJobFiles(jobsDir);
@@ -248,7 +246,7 @@ export function startRalphServer(opts: RalphServerOptions) {
           let body: { reason?: string } = {};
           try {
             body = await req.json();
-          } catch {}
+          } catch { }
           const reason = body.reason === "user_stop" ? "user_stop" : "user_quit";
           const event: RalphEvent = {
             type: "ralph.interrupted",
@@ -266,6 +264,7 @@ export function startRalphServer(opts: RalphServerOptions) {
       // --- Prompt (modified to accept jobId) ---
       "/prompt": {
         POST: async (req) => {
+          debugger;
           let body: { prompt?: string; jobId?: string };
           try {
             body = await req.json();
@@ -344,7 +343,7 @@ export function startRalphServer(opts: RalphServerOptions) {
               const cleanup = () => {
                 unsub();
                 clearInterval(heartbeat);
-                try { controller.close(); } catch {}
+                try { controller.close(); } catch { }
               };
 
               const unsub = bus.subscribeAll((event: RalphEvent) => {

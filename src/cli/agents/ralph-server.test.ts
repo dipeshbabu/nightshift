@@ -17,15 +17,14 @@ beforeEach(() => {
   mkdirSync(join(tmpDir, "runs"), { recursive: true });
   bus = createBus();
   caffinateExitCalls = 0;
-  const port = 10000 + Math.floor(Math.random() * 50000);
   server = startRalphServer({
-    port,
+    port: 0,
     bus,
     prefix: tmpDir,
     onPrompt: async () => {},
     onCaffinateExit: () => { caffinateExitCalls++; },
   });
-  baseUrl = `http://localhost:${port}`;
+  baseUrl = `http://localhost:${server.port}`;
 });
 
 afterEach(() => {
