@@ -74,6 +74,40 @@ describe("ensurePrefixTools", () => {
     // Should resolve without throwing or installing anything
     await ensurePrefixTools(testPrefix);
   });
+
+  test("calls installer when gollum tools are missing from pre-v0.1.4 prefix", async () => {
+    // Simulate a pre-v0.1.4 prefix: core tools present, gollum absent
+    for (const bin of ["opencode", "uv", "rg"]) {
+      writeFileSync(join(testPrefix, "bin", bin), "");
+    }
+
+    let installCalled = false;
+    const fakeInstaller = async (prefix: string) => {
+      installCalled = true;
+      // Simulate what installRubyAndGollum produces
+      for (const bin of ["ruby", "gem", "gollum"]) {
+        writeFileSync(join(prefix, "bin", bin), "");
+      }
+    };
+
+    await ensurePrefixTools(testPrefix, { installGollum: fakeInstaller });
+
+    expect(installCalled).toBe(true);
+    expect(checkPrefixTools(testPrefix)).toHaveLength(0);
+  });
+
+  test("throws when installer fails to produce expected binaries", async () => {
+    for (const bin of ["opencode", "uv", "rg"]) {
+      writeFileSync(join(testPrefix, "bin", bin), "");
+    }
+
+    // Installer that does nothing (simulates a failed gem install)
+    const brokenInstaller = async () => {};
+
+    await expect(
+      ensurePrefixTools(testPrefix, { installGollum: brokenInstaller }),
+    ).rejects.toThrow(/still missing tools after upgrade/);
+  });
 });
 
 describe("buildBootstrapPrompt", () => {
