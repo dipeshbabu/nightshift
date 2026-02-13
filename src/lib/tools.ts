@@ -237,12 +237,20 @@ export function checkPrefixTools(prefix: string): string[] {
   return required.filter((bin) => !existsSync(join(binDir, bin)));
 }
 
+export interface EnsurePrefixToolsOptions {
+  /** Override the gollum installer (used by tests to avoid network calls). */
+  installGollum?: (prefix: string) => Promise<void>;
+}
+
 /**
  * Ensure a prefix has all tools required by the current nightshift version.
  * Automatically installs missing tools when possible, allowing older prefixes
  * to be transparently upgraded (e.g. adding gollum introduced in v0.1.4).
  */
-export async function ensurePrefixTools(prefix: string): Promise<void> {
+export async function ensurePrefixTools(
+  prefix: string,
+  opts?: EnsurePrefixToolsOptions,
+): Promise<void> {
   const missing = checkPrefixTools(prefix);
   if (missing.length === 0) return;
 
@@ -259,7 +267,8 @@ export async function ensurePrefixTools(prefix: string): Promise<void> {
   const gollumTools = ["ruby", "gem", "gollum"];
   if (gollumTools.some((t) => missing.includes(t))) {
     console.log(`Upgrading prefix: installing missing tools (${missing.join(", ")})...`);
-    await installRubyAndGollum(prefix);
+    const installer = opts?.installGollum ?? installRubyAndGollum;
+    await installer(prefix);
   }
 
   // Verify everything is in place after install.
