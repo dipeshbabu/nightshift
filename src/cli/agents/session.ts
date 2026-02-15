@@ -83,6 +83,31 @@ export async function runSession(options: SessionOptions): Promise<SessionResult
             }
           }
 
+          // Auto-reject questions for our session (Issue #50).
+          // Daemon/server runs have no UI, so a question would hang until timeout.
+          if (event.type === "question.asked") {
+            const request = event.properties as any;
+            if (request.sessionID === sessionId) {
+              const q =
+                (request.question as string) ||
+                (request.prompt as string) ||
+                (request.text as string) ||
+                "(question)";
+
+              if (bus && phase) {
+                bus.publish({
+                  type: "session.question",
+                  timestamp: Date.now(),
+                  phase,
+                  question: q,
+                });
+              }
+
+              append(`[Auto-rejecting question: ${q}]\n`);
+              await client.question.reject({ requestID: request.id });
+            }
+          }
+
           if (event.type === "message.part.updated") {
             const { part, delta } = event.properties;
             if (part.sessionID !== sessionId) continue;

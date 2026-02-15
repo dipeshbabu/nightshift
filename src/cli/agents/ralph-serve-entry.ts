@@ -129,20 +129,29 @@ export async function runRalphDaemon(argv: string[]) {
               branchName,
               conflicts: merge.conflicts ?? "",
             });
-
-            await resolveConflicts({
-              client: workerHandle.client,
+          
+            const rr = await resolveConflicts({
+              workerClient: workerHandle.client,
+              bossClient: bossHandle.client,
               worktreePath,
               conflicts: merge.conflicts ?? "",
               model: agentModel,
+              evalModel,
               bus: publisher,
             });
-
-            // Abort any leftover merge state before retrying
+          
+            // rr.done already implies deterministic git checks passed inside the resolver.
+            // Do not re-run mergeMainIntoWorktree here (that would re-attempt the merge).
+            if (rr.done) {
+              merge.clean = true;
+              break;
+            }
+          
+            // If still not resolved, then reset merge state and retry from a clean merge attempt.
             await abortMerge(worktreePath);
             merge = await mergeMainIntoWorktree(worktreePath);
             retries++;
-          }
+          }          
 
           if (merge.clean) {
             await withMergeLock(async () => {

@@ -105,6 +105,12 @@ export interface SessionPermissionEvent extends BaseEvent {
   description: string;
 }
 
+export interface SessionQuestionEvent extends BaseEvent {
+  type: "session.question";
+  phase: "executor" | "validator" | "resolver";
+  question: string;
+}
+
 export interface RalphInterruptedEvent extends BaseEvent {
   type: "ralph.interrupted";
   reason: "user_quit" | "user_stop";
@@ -159,6 +165,7 @@ export type RalphEvent =
   | SessionTextDeltaEvent
   | SessionToolStatusEvent
   | SessionPermissionEvent
+  | SessionQuestionEvent
   | ResolverStartEvent
   | ResolverCompleteEvent
   | WorktreeCreatedEvent

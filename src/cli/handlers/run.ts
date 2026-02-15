@@ -274,6 +274,8 @@ function formatEventForCli(event: RalphEvent): string | null {
     }
     case "session.permission":
       return `[Auto-approving ${event.permission}${event.description ? `: ${event.description}` : ""}]`;
+    case "session.question":
+      return `[Auto-rejecting question: ${event.question}]`;  
     case "resolver.start":
       return `\n[ralph] ── Resolver resolving conflicts ──\n${event.conflicts}`;
     case "resolver.complete":
@@ -443,20 +445,28 @@ async function runWithRalph(prefix: string, workspacePath: string, options: Ralp
                 branchName,
                 conflicts: merge.conflicts ?? "",
               });
-
-              await resolveConflicts({
-                client: workerHandle.client,
+            
+              const rr = await resolveConflicts({
+                workerClient: workerHandle.client,
+                bossClient: bossHandle.client,
                 worktreePath,
                 conflicts: merge.conflicts ?? "",
                 model: agentModel,
+                evalModel,
                 bus: publisher,
               });
-
-              // Abort any leftover merge state before retrying
+            
+              // rr.done already implies deterministic git checks passed inside the resolver.
+              // Do not re-run mergeMainIntoWorktree here (that would re-attempt the merge).
+              if (rr.done) {
+                merge.clean = true;
+                break;
+              }            
+            
               await abortMerge(worktreePath);
               merge = await mergeMainIntoWorktree(worktreePath);
               retries++;
-            }
+            }            
 
             if (merge.clean) {
               await withMergeLock(async () => {
