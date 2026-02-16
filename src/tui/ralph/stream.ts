@@ -157,7 +157,7 @@ export function streamEvents(
               try {
                 const event: RalphEvent = JSON.parse(line.slice(6));
                 handleEvent(event);
-              } catch {}
+              } catch { }
             }
           }
         }
