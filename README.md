@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  Turn Coding Agents into autonomous knowledge workers.
+  Platform for securly running Agents with incredible devX
 </p>
 
 <p align="center">
@@ -24,9 +24,8 @@
 
 # Nightshift
 
-Autonomous agent orchestrator with Firecracker VM isolation.
-
-Nightshift runs AI agents in isolated [Firecracker](https://firecracker-microvm.github.io/) microVMs on bare-metal infrastructure. Each agent gets its own VM with a dedicated filesystem, network, and resource limits — so agents can execute code, edit files, and make network calls without affecting the host or each other.
+Nightshift runs AI agents in isolated [Firecracker](https://firecracker-microvm.github.io/) microVMs on bare-metal infrastructure. 
+Each agent gets its own microVM with a dedicated filesystem, network, and resource limits; so agents can execute code, edit files, and make network calls without affecting the host or each other.
 
 ## Installation
 
@@ -70,30 +69,13 @@ async def code_reviewer(prompt: str):
         yield message
 ```
 
-Deploy to a Nightshift platform:
+Deploy to a platform running Nightshift:
 
 ```bash
 nightshift login --url https://api.nightshift.sh
 nightshift deploy agent.py
-nightshift run code_reviewer --prompt "Review the auth module for security issues"
+nightshift run code_reviewer --prompt "Review the auth module for security issues" --follow
 ```
-
-Or run locally on a machine with Firecracker:
-
-```bash
-nightshift run code_reviewer agent.py --prompt "Review the auth module"
-```
-
-## AgentConfig
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `workspace` | `""` | Host directory to mount into the VM at `/workspace` |
-| `vcpu_count` | `2` | Number of vCPUs allocated to the VM |
-| `mem_size_mib` | `2048` | Memory in MiB allocated to the VM |
-| `timeout_seconds` | `1800` | Maximum agent execution time (30 min default) |
-| `forward_env` | `[]` | Environment variables to forward from host |
-| `env` | `{}` | Static environment variables set in the VM |
 
 ## Documentation
 
