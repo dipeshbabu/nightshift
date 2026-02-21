@@ -13,3 +13,5 @@ class AgentConfig:
     timeout_seconds: int = 1800
     forward_env: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    max_concurrent_vms: int = 0  # 0 = use platform default; >0 = explicit limit
+    stateful: bool = False  # True = single VM, serial, workspace extracted on teardown

@@ -13,6 +13,8 @@ class NightshiftConfig:
     vm_timeout_seconds: int = 1800  # 30 minutes
     vm_health_timeout_seconds: int = 60
     vm_event_port: int = 8080
+    vm_idle_timeout_seconds: int = 300  # 5 min idle before VM teardown
+    vm_max_per_agent: int = 3  # default max concurrent VMs per agent
     db_path: str = "/opt/nightshift/nightshift.db"
     agents_storage_dir: str = "/opt/nightshift/agents"
 
@@ -28,6 +30,12 @@ class NightshiftConfig:
             db_path=os.environ.get("NIGHTSHIFT_DB_PATH", "/opt/nightshift/nightshift.db"),
             agents_storage_dir=os.environ.get(
                 "NIGHTSHIFT_AGENTS_DIR", "/opt/nightshift/agents"
+            ),
+            vm_idle_timeout_seconds=int(
+                os.environ.get("NIGHTSHIFT_VM_IDLE_TIMEOUT_SECONDS", "300")
+            ),
+            vm_max_per_agent=int(
+                os.environ.get("NIGHTSHIFT_VM_MAX_PER_AGENT", "3")
             ),
         )
 

@@ -24,7 +24,7 @@ def _find_pyproject(start_path: str) -> str | None:
 def package_agent(
     module_path: str,
     function_name: str,
-    prompt: str,
+    prompt: str | None = None,
 ) -> str:
     """Package an agent's source file and a manifest for VM injection.
 
@@ -54,12 +54,13 @@ def package_agent(
             shutil.copy2(lock_path, os.path.join(pkg_dir, "uv.lock"))
 
     # Write manifest
-    manifest = {
+    manifest: dict[str, object] = {
         "module": os.path.splitext(source_filename)[0],
         "function": function_name,
-        "prompt": prompt,
         "has_pyproject": has_pyproject,
     }
+    if prompt is not None:
+        manifest["prompt"] = prompt
     with open(os.path.join(pkg_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f)
 

@@ -12,7 +12,22 @@ description: "Platform architecture, VM lifecycle, and data locations."
 | `/opt/nightshift/nightshift.db` | SQLite database (agents, runs, api_keys tables) |
 | `/opt/nightshift/agents/{uuid}/` | Deployed agent source files (one directory per agent) |
 | `/opt/nightshift/vmlinux` | Linux kernel for Firecracker VMs |
-| `/opt/nightshift/rootfs.ext4` | Base Ubuntu rootfs image (shared, never modified) |
+| `/opt/nightshift/rootfs.ext4` | Base Ubuntu rootfs image with baked agent runtime |
 
-TBD
+## Rootfs layers
+
+The base rootfs is an Ubuntu image with the Nightshift agent runtime baked in via `infra/bake-rootfs.sh`. It contains:
+
+- `/sbin/init` — minimal shell init (PID 1) that boots the VM, configures networking, and starts the agent
+- `/opt/nightshift/agent/` — agent entry point and multi-run HTTP server
+- `/opt/nightshift/sdk/` — `NightshiftApp` and `AgentConfig` (imported by user agents)
+- `/opt/nightshift/protocol/` — packaging and event serialization
+
+Each VM run creates a **copy-on-write overlay** of this base image. Per-VM data is injected into the overlay before boot:
+
+- `/workspace/` — user project files
+- `/opt/nightshift/agent_pkg/` — the deployed agent's source code and manifest
+- `/etc/nightshift/env` — per-run environment variables
+
+The base rootfs is never modified at runtime. Changes only happen when an operator re-bakes it after a code update (see [Deploying Changes](/contributing/deploying-changes)).
 

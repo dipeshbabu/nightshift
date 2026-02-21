@@ -126,7 +126,13 @@ EOF
 echo "    Created /etc/caddy/Caddyfile"
 
 # -------------------------------------------------------------------
-# 5. Enable and start services
+# 5. Bake agent runtime into rootfs
+# -------------------------------------------------------------------
+echo "==> Baking agent runtime into rootfs"
+sudo "$SCRIPT_DIR/bake-rootfs.sh"
+
+# -------------------------------------------------------------------
+# 6. Enable and start services
 # -------------------------------------------------------------------
 echo "==> Starting services..."
 

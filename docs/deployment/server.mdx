@@ -46,6 +46,9 @@ The script:
   <Step title="Configure Caddy">
     Writes a Caddyfile that reverse-proxies your hostname to `localhost:3000`. Caddy handles TLS certificate provisioning and renewal automatically via Let's Encrypt.
   </Step>
+  <Step title="Bake rootfs">
+    Runs `bake-rootfs.sh` to copy the agent runtime (init script, agent entry point, SDK, protocol layer) into the base rootfs image. This is the code that runs inside every Firecracker VM.
+  </Step>
   <Step title="Start services">
     Enables and starts both `nightshift-serve` and `caddy` via systemd.
   </Step>

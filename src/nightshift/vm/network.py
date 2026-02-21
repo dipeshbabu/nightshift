@@ -9,7 +9,10 @@ Each VM gets a unique TAP device and IP pair:
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 # Track allocated VM indices to avoid collisions
 _allocated_indices: set[int] = set()
@@ -47,6 +50,43 @@ async def _allocate_index() -> int:
 async def _release_index(idx: int) -> None:
     async with _index_lock:
         _allocated_indices.discard(idx)
+
+
+async def cleanup_stale_taps() -> None:
+    """Remove any leftover tap-* devices from a previous server process.
+
+    Called on startup before the pool is created. This prevents IP/subnet
+    collisions when _allocated_indices resets on restart.
+    """
+    rc, stdout, _ = await _run("ip -o link show type tun")
+    if rc != 0 or not stdout:
+        return
+
+    for line in stdout.splitlines():
+        # Format: "62: tap-c5bcddec: <FLAGS> ..."
+        parts = line.split(":")
+        if len(parts) < 2:
+            continue
+        name = parts[1].strip()
+        if name.startswith("tap-"):
+            logger.info("Cleaning up stale TAP device: %s", name)
+            await _run(f"ip link del {name}")
+
+    # Also flush any orphaned nightshift NAT rules (172.16.x.2)
+    rc, stdout, _ = await _run("iptables -t nat -S POSTROUTING")
+    if rc == 0 and stdout:
+        for line in stdout.splitlines():
+            if "172.16." in line and "MASQUERADE" in line:
+                # Convert -A to -D for deletion
+                del_cmd = line.replace("-A ", "-D ", 1)
+                await _run(f"iptables -t nat {del_cmd}")
+
+    rc, stdout, _ = await _run("iptables -S FORWARD")
+    if rc == 0 and stdout:
+        for line in stdout.splitlines():
+            if "tap-" in line:
+                del_cmd = line.replace("-A ", "-D ", 1)
+                await _run(f"iptables {del_cmd}")
 
 
 async def create_tap(vm_id: str) -> TapConfig:

@@ -16,9 +16,11 @@ app = NightshiftApp()
 
 @app.agent(
     AgentConfig(
-        workspace="/home/ubuntu/nightshift/examples/test-workspace/",
+        workspace="test-workspace",
         vcpu_count=2,
         mem_size_mib=2048,
+        # max_concurrent_vms=2,
+        stateful=True,
     )
 )
 async def basic_agent(prompt: str):
@@ -33,8 +35,3 @@ async def basic_agent(prompt: str):
         ),
     ):
         yield message
-
-
-if __name__ == "__main__":
-    from nightshift.cli.main import cli
-    cli()

@@ -53,6 +53,13 @@
           "administration/api-keys",
           "administration/backups"
         ]
+      },
+      {
+        "group": "Contributing",
+        "pages": [
+          "contributing/dev-setup",
+          "contributing/deploying-changes"
+        ]
       }
     ]
   },

@@ -1,0 +1,36 @@
+---
+title: "Dev Setup"
+sidebarTitle: "Dev Setup"
+description: "Set up a development environment for contributing to Nightshift."
+---
+
+## Prerequisites
+
+- AWS CLI configured with EC2 permissions
+- [uv](https://docs.astral.sh/uv/) installed locally
+- A clone of the Nightshift repository
+
+## Provision a dev instance
+
+```bash
+./infra/setup.sh
+```
+
+This launches a `c5.metal` EC2 instance with Firecracker, a Linux kernel, an Ubuntu rootfs, and all dependencies pre-installed. See [Provision Instance](/deployment/provision) for details.
+
+Connection details are saved to `infra/.instance` and used automatically by the deploy script.
+
+## Run locally
+
+Install dependencies and start the server locally (requires a machine with `/dev/kvm`):
+
+```bash
+uv sync
+uv run nightshift serve
+```
+
+## Tear down
+
+```bash
+./infra/teardown.sh
+```

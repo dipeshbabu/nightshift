@@ -34,9 +34,10 @@ if [ -f /etc/nightshift/env ]; then
     set +a
 fi
 
-# Add uv and Python to PATH
+# Add uv and Python to PATH, and nightshift runtime to PYTHONPATH
 export PATH="/root/.local/bin:$PATH"
+export PYTHONPATH="/opt"
 
 # Start the agent
 cd /workspace
-exec python -m nightshift.agent 2>&1 | tee /var/log/nightshift-agent.log
+exec python3 -m nightshift.agent 2>&1 | tee /var/log/nightshift-agent.log

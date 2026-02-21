@@ -1,0 +1,75 @@
+---
+title: "Deploying Changes"
+sidebarTitle: "Deploying"
+description: "Push code changes to a running Nightshift server."
+---
+
+## The deploy script
+
+After making changes locally, deploy them to a running server with:
+
+```bash
+./infra/deploy.sh
+```
+
+This reads connection details from `infra/.instance` (written by `setup.sh`) and:
+
+1. **Syncs** the project to the server via rsync
+2. **Bakes** the agent runtime into the base rootfs
+3. **Restarts** the `nightshift-serve` systemd service
+
+Any warm VMs from the pool are invalidated on restart, so the next agent run cold-starts with the new code.
+
+### Explicit host
+
+If you're not using `setup.sh` or want to target a different server:
+
+```bash
+./infra/deploy.sh ubuntu@<IP>
+./infra/deploy.sh --key ~/.ssh/my-key.pem ubuntu@<IP>
+```
+
+## What gets baked
+
+The deploy script calls `infra/bake-rootfs.sh`, which mounts the base rootfs image and copies in the agent runtime — the code that runs inside every Firecracker VM:
+
+| Destination in rootfs | Source | Purpose |
+|---|---|---|
+| `/sbin/init` | Inline shell script | Minimal PID 1 — mounts filesystems, configures network, starts the agent |
+| `/opt/nightshift/agent/` | `src/nightshift/agent/` | Agent entry point and runner |
+| `/opt/nightshift/sdk/` | `src/nightshift/sdk/` | `NightshiftApp`, `AgentConfig` (imported by user agents) |
+| `/opt/nightshift/events.py` | `src/nightshift/events.py` | Event types |
+| `/opt/nightshift/protocol/` | `src/nightshift/protocol/` | Packaging and event serialization |
+| `/opt/nightshift/__init__.py` | `src/nightshift/__init__.py` | Package re-exports |
+
+These are **not** baked (injected per-VM via overlay at runtime):
+
+| Path | Contents |
+|---|---|
+| `/workspace/` | User project files |
+| `/opt/nightshift/agent_pkg/` | User's deployed agent code + manifest |
+| `/etc/nightshift/env` | Per-run environment variables |
+
+## Baking manually
+
+If you're already on the server, you can bake the rootfs directly:
+
+```bash
+sudo ./infra/bake-rootfs.sh
+sudo systemctl restart nightshift-serve
+```
+
+## Verify
+
+After deploying, confirm the server is healthy:
+
+```bash
+curl https://<your-hostname>/health
+# {"status":"ok"}
+```
+
+Run an agent to verify end-to-end:
+
+```bash
+nightshift run <agent-name> --prompt "test"
+```

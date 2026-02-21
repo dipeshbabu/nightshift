@@ -106,6 +106,8 @@ def _discover_agents(file_path: str) -> dict:
                 "timeout_seconds": agent.config.timeout_seconds,
                 "forward_env": agent.config.forward_env,
                 "env": agent.config.env,
+                "max_concurrent_vms": agent.config.max_concurrent_vms,
+                "stateful": agent.config.stateful,
             },
         }
     return agents

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import tarfile
@@ -25,12 +26,15 @@ from nightshift.events import EventBuffer, StartedEvent
 from nightshift.registry import AgentRecord, AgentRegistry
 from nightshift.sdk.app import RegisteredAgent
 from nightshift.sdk.config import AgentConfig
+from nightshift.vm.network import cleanup_stale_taps
+from nightshift.vm.pool import VMPool
 
 
 
 _registry: AgentRegistry | None = None
 _event_buffer: EventBuffer = EventBuffer()
 _config: NightshiftConfig = NightshiftConfig()
+_vm_pool: VMPool | None = None
 
 
 def _get_registry() -> AgentRegistry:
@@ -57,7 +61,10 @@ async def _auth_dependency(request: Request) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _registry, _config
+    global _registry, _config, _vm_pool
+
+    logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
+
     _config = NightshiftConfig.from_env()
 
     os.makedirs(os.path.dirname(_config.db_path), exist_ok=True)
@@ -67,8 +74,17 @@ async def lifespan(app: FastAPI):
     await _registry.init_db()
     await bootstrap_api_key(_registry)
 
+    await cleanup_stale_taps()
+
+    _vm_pool = VMPool(
+        idle_timeout=_config.vm_idle_timeout_seconds,
+        default_max_vms=_config.vm_max_per_agent,
+    )
+
     yield
 
+    if _vm_pool:
+        await _vm_pool.shutdown()
     await _registry.close()
 
 
@@ -230,6 +246,10 @@ async def deploy_agent(
         agent_id=agent_id,
     )
 
+    # Invalidate warm VMs so next run cold-starts with new code
+    if _vm_pool:
+        await _vm_pool.invalidate_agent(agent.id)
+
     return JSONResponse(
         {"id": agent.id, "name": agent.name, "status": "deployed"},
         status_code=200,
@@ -267,6 +287,10 @@ async def delete_agent(
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
 
+    # Invalidate warm VMs before deleting
+    if _vm_pool:
+        await _vm_pool.invalidate_agent(agent.id)
+
     # Remove files
     if os.path.isdir(agent.storage_path):
         shutil.rmtree(agent.storage_path, ignore_errors=True)
@@ -282,12 +306,17 @@ def _build_registered_agent(
 ) -> RegisteredAgent:
     """Bridge a stored AgentRecord into a RegisteredAgent for run_task().
 
-    runtime_env is merged into the agent's env dict — this is how per-user
-    secrets (like ANTHROPIC_API_KEY) flow from the run request into the VM.
+    When runtime_env is provided AND the pool is active, runtime_env is kept
+    separate (passed to submit_run per request) — only static env goes into
+    the agent config. For legacy non-pooled runs, runtime_env is still merged
+    into the agent's env dict for backwards compatibility.
     """
     config_data = json.loads(agent.config_json)
     env = config_data.get("env", {})
-    if runtime_env:
+
+    # For non-pooled (legacy) runs, merge runtime_env into static env.
+    # For pooled runs, the caller passes runtime_env separately.
+    if runtime_env and _vm_pool is None:
         env.update(runtime_env)
 
     workspace = config_data.get("workspace", "")
@@ -301,6 +330,8 @@ def _build_registered_agent(
         timeout_seconds=config_data.get("timeout_seconds", 1800),
         forward_env=config_data.get("forward_env", []),
         env=env,
+        max_concurrent_vms=config_data.get("max_concurrent_vms", 0),
+        stateful=config_data.get("stateful", False),
     )
 
     def _placeholder(prompt: str):
@@ -339,7 +370,12 @@ async def create_run(
 
     # Launch task in background
     registered = _build_registered_agent(agent_record, runtime_env=runtime_env)
-    asyncio.create_task(_run_agent_task(run.id, prompt, registered, registry))
+    asyncio.create_task(
+        _run_agent_task(
+            run.id, prompt, registered, registry,
+            agent_id=agent_record.id, runtime_env=runtime_env,
+        )
+    )
 
     return JSONResponse({"id": run.id, "status": "started"}, status_code=202)
 
@@ -349,12 +385,26 @@ async def _run_agent_task(
     prompt: str,
     agent: RegisteredAgent,
     registry: AgentRegistry,
+    agent_id: str = "",
+    runtime_env: dict[str, str] | None = None,
 ) -> None:
-    """Background task that runs an agent in a Firecracker VM."""
-    from nightshift.task import run_task
+    """Background task that runs an agent in a Firecracker VM.
 
+    Uses the warm VM pool when available, falls back to one-shot run_task.
+    """
     try:
-        await run_task(prompt, run_id, agent, _event_buffer)
+        if _vm_pool and agent_id:
+            from nightshift.task import run_task_pooled
+
+            await run_task_pooled(
+                prompt, run_id, agent, _event_buffer,
+                pool=_vm_pool, agent_id=agent_id,
+                runtime_env=runtime_env,
+            )
+        else:
+            from nightshift.task import run_task
+
+            await run_task(prompt, run_id, agent, _event_buffer)
         await registry.complete_run(run_id)
     except Exception as e:
         await registry.complete_run(run_id, error=str(e))

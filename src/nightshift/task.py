@@ -15,6 +15,8 @@ import os
 import shutil
 import tempfile
 
+import logging
+
 from nightshift.config import NightshiftConfig
 from nightshift.events import (
     CompletedEvent,
@@ -24,6 +26,9 @@ from nightshift.events import (
 from nightshift.protocol.packaging import cleanup_package, package_agent
 from nightshift.sdk.app import RegisteredAgent
 from nightshift.vm.manager import FirecrackerVM, VMConfig
+from nightshift.vm.pool import VMPool
+
+logger = logging.getLogger(__name__)
 
 AGENT_PKG_DIR = "/opt/nightshift/agent_pkg"
 
@@ -109,4 +114,51 @@ async def run_task(
             cleanup_package(pkg_dir)
         if staging_dir:
             shutil.rmtree(staging_dir, ignore_errors=True)
+        await log.cleanup(run_id)
+
+
+async def run_task_pooled(
+    prompt: str,
+    run_id: str,
+    agent: RegisteredAgent,
+    log: EventLog,
+    pool: VMPool,
+    agent_id: str,
+    runtime_env: dict[str, str] | None = None,
+) -> None:
+    """Execute a task using the warm VM pool with retry on warm failure.
+
+    Args:
+        prompt:      The user's prompt text.
+        run_id:      Unique identifier for this run.
+        agent:       The registered agent to execute.
+        log:         Event log for streaming events.
+        pool:        The VM pool to checkout/checkin VMs.
+        agent_id:    Agent identifier in the pool.
+        runtime_env: Per-run env vars (e.g. API keys from the run request).
+    """
+    config = NightshiftConfig.from_env()
+
+    try:
+        for attempt in range(2):  # 1 retry after warm failure
+            vm = await pool.checkout(agent_id, agent, config)
+            try:
+                await vm.submit_run(prompt, run_id, env_vars=runtime_env)
+                await vm.wait_for_completion(log, run_id)
+                logger.info("Run %s: wait_for_completion returned, checking in VM %s", run_id, vm.vm_id)
+                await pool.checkin(agent_id, vm)
+                logger.info("Run %s: checkin complete", run_id)
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Run %s failed on VM %s (attempt %d), invalidating: %s",
+                    run_id, vm.vm_id, attempt + 1, exc,
+                )
+                await pool.invalidate_vm(agent_id, vm)
+                if attempt == 0:
+                    continue  # retry with fresh VM
+                raise
+    except Exception as e:
+        await log.publish(run_id, ErrorEvent(error=str(e)))
+    finally:
         await log.cleanup(run_id)

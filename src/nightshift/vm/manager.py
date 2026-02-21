@@ -284,38 +284,59 @@ class FirecrackerVM:
                         return
 
     async def copy_workspace_out(self, dest_path: str) -> None:
-        """Gracefully shut down the VM and extract the modified workspace.
+        """Stop the VM and extract the modified workspace.
 
-        Sends Ctrl+Alt+Del to the guest (triggers a clean shutdown via init),
-        waits up to 10 seconds for the process to exit, then falls back to
-        SIGKILL if it doesn't cooperate. After the VM is stopped, the workspace
-        directory is copied out of the overlay rootfs image to dest_path.
+        Kills the firecracker process, then mounts the overlay rootfs and
+        copies the /workspace directory to dest_path via rsync.
 
         This must be called BEFORE destroy(), because destroy() removes the
         overlay image that contains the workspace data.
         """
-        # Send a graceful shutdown signal. Firecracker translates SendCtrlAltDel
-        # into a keyboard event that the guest kernel handles as a reboot/shutdown.
-        try:
-            await self._api_put("/actions", {"action_type": "SendCtrlAltDel"})
-            if self._proc:
-                try:
-                    # Give the guest 10 seconds to shut down cleanly.
-                    # A clean shutdown ensures all file buffers are flushed.
-                    await asyncio.wait_for(self._proc.wait(), timeout=10)
-                except asyncio.TimeoutError:
-                    # Guest didn't shut down in time — force kill.
-                    self._proc.kill()
-        except Exception:
-            # If the API call itself fails (e.g., socket already gone),
-            # just force-kill the process to ensure it's stopped.
-            if self._proc:
-                self._proc.kill()
+        import logging
+        import subprocess as _sp
+        import time
+        _log = logging.getLogger(__name__)
 
-        # Mount the overlay image and copy the /workspace directory out to
-        # the host. This is how the agent's work products (code changes,
-        # result files) get back to the host filesystem.
-        await copy_workspace_out(self._overlay_path, self.vm_id, dest_path)
+        # Kill via asyncio transport (so asyncio knows about it) but skip
+        # the buggy .wait() which hangs on Python 3.14.
+        if self._proc and self._proc.returncode is None:
+            pid = self._proc.pid
+            _log.info("VM %s: killing process (pid=%d)", self.vm_id, pid)
+            self._proc.kill()
+            time.sleep(1)  # synchronous sleep — let kernel reap the process
+            _log.info("VM %s: process killed", self.vm_id)
+
+        # Mount overlay, rsync workspace, unmount — all synchronous to avoid
+        # asyncio subprocess issues after killing the firecracker process.
+        overlay_dir = os.path.dirname(self._overlay_path)
+        mount_point = os.path.join(overlay_dir, f"mnt-out-{self.vm_id}")
+        os.makedirs(mount_point, exist_ok=True)
+
+        _log.info("VM %s: mounting overlay", self.vm_id)
+        r = _sp.run(
+            ["mount", "-o", "loop", self._overlay_path, mount_point],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"Failed to mount overlay for copy-out: {r.stderr}")
+
+        try:
+            ws_src = os.path.join(mount_point, "workspace")
+            if os.path.isdir(ws_src):
+                _log.info("VM %s: rsyncing workspace to %s", self.vm_id, dest_path)
+                r = _sp.run(
+                    ["rsync", "-a", "--delete", f"{ws_src}/", f"{dest_path}/"],
+                    capture_output=True, text=True,
+                )
+                if r.returncode != 0:
+                    raise RuntimeError(f"Failed to rsync workspace: {r.stderr}")
+                _log.info("VM %s: workspace extraction complete", self.vm_id)
+            else:
+                _log.warning("VM %s: no /workspace in overlay", self.vm_id)
+        finally:
+            _sp.run(["umount", mount_point], capture_output=True)
+            if os.path.isdir(mount_point):
+                os.rmdir(mount_point)
 
     async def destroy(self) -> None:
         """Tear down all resources associated with this VM.
@@ -354,6 +375,46 @@ class FirecrackerVM:
 
             shutil.rmtree(self._overlay_dir, ignore_errors=True)
 
+    async def submit_run(
+        self,
+        prompt: str,
+        run_id: str,
+        env_vars: dict[str, str] | None = None,
+    ) -> None:
+        """POST a new run to the guest agent's /run endpoint (warm VM mode).
+
+        Raises RuntimeError on 4xx/5xx responses.
+        """
+        url = f"{self.guest_url}/run"
+        payload: dict[str, object] = {"prompt": prompt, "run_id": run_id}
+        if env_vars:
+            payload["env"] = env_vars
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(url, json=payload)
+            if r.status_code >= 400:
+                raise RuntimeError(
+                    f"Guest /run failed: {r.status_code} {r.text}"
+                )
+
+    def is_healthy(self) -> bool:
+        """Quick synchronous liveness check: is the firecracker process alive?
+
+        For a full health check (including HTTP /health), use is_healthy_async().
+        """
+        return self._proc is not None and self._proc.returncode is None
+
+    async def is_healthy_async(self) -> bool:
+        """Check both process liveness and guest HTTP /health endpoint."""
+        if not self.is_healthy():
+            return False
+        url = f"{self.guest_url}/health"
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get(url)
+                return r.status_code == 200
+        except httpx.HTTPError:
+            return False
+
     async def _api_put(self, path: str, body: dict) -> dict:
         """Send a PUT request to the Firecracker REST API over the Unix domain socket.
 
@@ -364,7 +425,7 @@ class FirecrackerVM:
         Raises RuntimeError if the API returns an HTTP 4xx/5xx error.
         """
         transport = httpx.AsyncHTTPTransport(uds=self._socket_path)
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost", timeout=10.0) as client:
             r = await client.put(path, json=body)
             if r.status_code >= 400:
                 raise RuntimeError(f"Firecracker API error on {path}: {r.status_code} {r.text}")
