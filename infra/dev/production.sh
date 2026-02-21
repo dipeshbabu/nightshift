@@ -7,9 +7,9 @@
 # It does NOT handle DNS; point your hostname at this machine first.
 #
 # Usage:
-#   ./infra/production.sh --hostname api.nightshift.sh
-#   ./infra/production.sh --hostname api.nightshift.sh --port 8080
-#   ./infra/production.sh --hostname api.nightshift.sh --api-key my-secret-key
+#   ./infra/dev/production.sh --hostname api.nightshift.sh
+#   ./infra/dev/production.sh --hostname api.nightshift.sh --port 8080
+#   ./infra/dev/production.sh --hostname api.nightshift.sh --api-key my-secret-key
 #
 set -euo pipefail
 
@@ -75,7 +75,7 @@ fi
 # Default to the directory containing this script's parent, but allow
 # override via NIGHTSHIFT_PROJECT_DIR.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="${NIGHTSHIFT_PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}"
+PROJECT_DIR="${NIGHTSHIFT_PROJECT_DIR:-$(dirname "$(dirname "$SCRIPT_DIR")")}"
 
 # Verify uv is available
 UV_PATH="$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")"
@@ -129,7 +129,7 @@ echo "    Created /etc/caddy/Caddyfile"
 # 5. Bake agent runtime into rootfs
 # -------------------------------------------------------------------
 echo "==> Baking agent runtime into rootfs"
-sudo "$SCRIPT_DIR/bake-rootfs.sh"
+sudo "$SCRIPT_DIR/../bake-rootfs.sh"
 
 # -------------------------------------------------------------------
 # 6. Enable and start services

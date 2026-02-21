@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - run: uv build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  build-rootfs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools wget
+
+      - name: Build base rootfs
+        run: sudo ./rootfs/build-rootfs.sh rootfs.ext4
+
+      - name: Bake agent runtime
+        run: sudo ./infra/bake-rootfs.sh rootfs.ext4
+
+      - name: Compress rootfs
+        run: gzip rootfs.ext4
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rootfs
+          path: rootfs.ext4.gz
+
+  publish-pypi:
+    runs-on: ubuntu-latest
+    needs: [build-python]
+    environment: pypi
+    steps:
+      - uses: astral-sh/setup-uv@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - run: uv publish dist/*
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
+  publish-github:
+    runs-on: ubuntu-latest
+    needs: [build-python, build-rootfs]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: rootfs
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+            rootfs.ext4.gz

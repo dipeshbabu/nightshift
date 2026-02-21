@@ -4,24 +4,40 @@ sidebarTitle: "Provision"
 description: "Set up a c5.metal EC2 instance with Firecracker, KVM, and all dependencies."
 ---
 
+## Operator deploy
 
-## Prerequisites
-
-- AWS CLI configured with credentials (EC2, IAM, Lambda, EventBridge Scheduler permissions)
-- `curl` and `jq` installed locally
-- The `infra/` directory from this repository
-
-## Run setup
+If you're an operator deploying Nightshift for your team, use the single-command deploy script. It provisions a c5.metal, pulls everything from PyPI and GitHub Releases, and starts serving — no repo checkout needed.
 
 ```bash
-cd infra
-bash setup.sh
+./infra/deploy.sh --hostname api.example.com --api-key ns_abc123
+```
+
+Optional flags:
+- `--region <region>` — AWS region (default: us-east-1)
+- `--version <tag>` — pin to a specific release (default: latest)
+- `--port <port>` — backend port (default: 3000)
+
+The script allocates an Elastic IP and prints DNS instructions at the end. Point your hostname's A record at the Elastic IP, and Caddy provisions TLS automatically.
+
+To upgrade an existing deployment:
+
+```bash
+./infra/upgrade.sh ubuntu@<ELASTIC_IP> --key ~/.ssh/nightshift.pem
+./infra/upgrade.sh --version v0.3.0  # reads target from state file
+```
+
+## Dev environment setup
+
+For development (requires a local repo checkout):
+
+```bash
+./infra/dev/setup.sh
 ```
 
 For a production deployment with TLS in one step:
 
 ```bash
-bash setup.sh --production --hostname api.example.com
+./infra/dev/setup.sh --production --hostname api.example.com
 ```
 
 This opens ports 80/443, provisions the instance, and runs `production.sh` on the remote machine to install Caddy + systemd services. See [Server](/deployment/server) for details.
@@ -55,7 +71,7 @@ This opens ports 80/443, provisions the instance, and runs `production.sh` on th
     Polls SSH and waits for `/opt/nightshift/.setup-done` marker.
   </Step>
   <Step title="Write connection details">
-    Writes connection details to `infra/.instance`.
+    Writes connection details to `infra/dev/.instance`.
   </Step>
 </Steps>
 
@@ -70,8 +86,7 @@ ssh -i ~/.ssh/nightshift-dev.pem ubuntu@<IP> 'tail -50 /var/log/nightshift-setup
 ## Tear down
 
 ```bash
-cd infra
-bash teardown.sh
+./infra/dev/teardown.sh
 ```
 
-Terminates the instance and removes `infra/.instance`. The SSH keypair and security group are preserved for next time.
+Terminates the instance and removes `infra/dev/.instance`. The SSH keypair and security group are preserved for next time.

@@ -10,10 +10,10 @@
 #   - EventBridge Schedules: start 8am ET Mon-Fri, stop midnight ET Tue-Sat
 #
 # Prerequisites:
-#   - infra/.instance must exist (run setup.sh first)
+#   - infra/dev/.instance must exist (run setup.sh first)
 #   - AWS CLI configured with appropriate permissions
 #
-# Usage: ./infra/cron.sh
+# Usage: ./infra/dev/cron.sh
 #
 set -euo pipefail
 

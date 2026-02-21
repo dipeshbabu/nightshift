@@ -3,7 +3,7 @@
 # Terminate the dev instance and clean up local state.
 #
 # This script:
-#   1. Reads instance details from infra/.instance (created by setup.sh)
+#   1. Reads instance details from infra/dev/.instance (created by setup.sh)
 #   2. Calls aws ec2 terminate-instances to shut down and destroy the instance
 #   3. Waits for the instance to reach the "terminated" state
 #   4. Removes the .instance state file
@@ -13,7 +13,7 @@
 #
 # IMPORTANT: c5.metal instances cost ~$4.08/hr. Always tear down when done.
 #
-# Usage: ./infra/teardown.sh
+# Usage: ./infra/dev/teardown.sh
 #
 set -euo pipefail
 

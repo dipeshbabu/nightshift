@@ -19,11 +19,11 @@
 #    - Node.js 22 LTS + Claude Code
 #    - KVM access for the ubuntu user
 # --Waits for SSH and the user-data setup to finish
-# --Saves instance details to infra/.instance for test.sh and teardown.sh
+# --Saves instance details to infra/dev/.instance for test.sh and teardown.sh
 #
 # Usage:
-#   ./infra/setup.sh
-#   ./infra/setup.sh --production --hostname api.nightshift.sh
+#   ./infra/dev/setup.sh
+#   ./infra/dev/setup.sh --production --hostname api.nightshift.sh
 #
 set -euo pipefail
 
@@ -418,11 +418,11 @@ if [ "$PRODUCTION" = true ]; then
     echo "==> Syncing project to instance..."
     rsync -az --exclude '.git' --exclude '__pycache__' --exclude '.venv' \
         -e "ssh -o StrictHostKeyChecking=no -i ~/.ssh/${KEY_NAME}.pem" \
-        "$(dirname "$SCRIPT_DIR")/" "ubuntu@${PUBLIC_IP}:/home/ubuntu/nightshift/"
+        "$(dirname "$(dirname "$SCRIPT_DIR")")/" "ubuntu@${PUBLIC_IP}:/home/ubuntu/nightshift/"
 
     echo "==> Running production deployment on instance..."
     ssh -o StrictHostKeyChecking=no -i ~/.ssh/${KEY_NAME}.pem "ubuntu@${PUBLIC_IP}" \
-        "cd /home/ubuntu/nightshift && ./infra/production.sh --hostname $PROD_HOSTNAME --port $PROD_PORT"
+        "cd /home/ubuntu/nightshift && ./infra/dev/production.sh --hostname $PROD_HOSTNAME --port $PROD_PORT"
 
     echo ""
     echo "=== Production instance ready ==="
@@ -434,6 +434,6 @@ else
     echo "=== Instance ready ==="
     echo "  ssh -i ~/.ssh/${KEY_NAME}.pem ubuntu@${PUBLIC_IP}"
     echo ""
-    echo "  Next: ./infra/test.sh"
-    echo "  Done: ./infra/teardown.sh"
+    echo "  Next: ./infra/dev/test.sh"
+    echo "  Done: ./infra/dev/teardown.sh"
 fi

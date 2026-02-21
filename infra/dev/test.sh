@@ -18,14 +18,14 @@
 #   - Polls the opencode health endpoint inside the VM
 #   - Cleans up (kills VM, removes TAP, deletes temp files)
 #
-# Usage: ./infra/test.sh
+# Usage: ./infra/dev/test.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Go up one level from infra/ to get the python/ project root.
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# Go up two levels from infra/dev/ to get the project root.
+PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 STATE_FILE="$SCRIPT_DIR/.instance"
 
@@ -37,7 +37,7 @@ STATE_FILE="$SCRIPT_DIR/.instance"
 #   REGION=us-east-1
 
 if [ ! -f "$STATE_FILE" ]; then
-    echo "ERROR: No instance found. Run ./infra/setup.sh first."
+    echo "ERROR: No instance found. Run ./infra/dev/setup.sh first."
     exit 1
 fi
 
@@ -65,7 +65,7 @@ echo ""
 #     __pycache__/: Python bytecode cache
 #     .pytest_cache/: pytest cache
 #     .ruff_cache/: ruff linter cache
-#     infra/.instance: local state file, not needed on remote
+#     infra/dev/.instance: local state file, not needed on remote
 
 echo "==> Syncing project to instance..."
 rsync -avz --delete \
@@ -73,7 +73,7 @@ rsync -avz --delete \
     --exclude '__pycache__' \
     --exclude '.pytest_cache' \
     --exclude '.ruff_cache' \
-    --exclude 'infra/.instance' \
+    --exclude 'infra/dev/.instance' \
     -e "ssh -o StrictHostKeyChecking=no -i $KEY_PATH" \
     "$PROJECT_DIR/" "ubuntu@$PUBLIC_IP:$REMOTE_DIR/"
 echo ""
