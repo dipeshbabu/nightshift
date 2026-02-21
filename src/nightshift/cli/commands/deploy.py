@@ -48,9 +48,21 @@ def _make_archive(project_dir: str) -> bytes:
     return buf.read()
 
 
+def _resolve_workspace(workspace_raw: str, file_dir: str) -> str:
+    """Resolve a workspace path relative to the agent file's directory.
+
+    Returns an absolute path if *workspace_raw* is non-empty, or "" otherwise.
+    """
+    if not workspace_raw:
+        return ""
+    path = os.path.normpath(os.path.join(file_dir, workspace_raw))
+    return os.path.abspath(path)
+
+
 def _discover_agents(file_path: str) -> dict:
     """Import a file and find the NightshiftApp instance to discover agents."""
     file_path = os.path.abspath(file_path)
+    file_dir = os.path.dirname(file_path)
     module_name = os.path.splitext(os.path.basename(file_path))[0]
 
     spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -77,9 +89,16 @@ def _discover_agents(file_path: str) -> dict:
     if not app._agents:
         raise click.ClickException(f"No agents registered in {file_path}")
 
-    return {
-        name: {
+    agents: dict = {}
+    for name, agent in app._agents.items():
+        workspace = _resolve_workspace(agent.config.workspace, file_dir)
+        if workspace and not os.path.isdir(workspace):
+            raise click.ClickException(
+                f"Agent '{name}': workspace directory does not exist: {workspace}"
+            )
+        agents[name] = {
             "function_name": agent.fn.__name__,
+            "workspace": workspace,
             "config": {
                 "workspace": agent.config.workspace,
                 "vcpu_count": agent.config.vcpu_count,
@@ -89,8 +108,7 @@ def _discover_agents(file_path: str) -> dict:
                 "env": agent.config.env,
             },
         }
-        for name, agent in app._agents.items()
-    }
+    return agents
 
 
 @click.command()
@@ -127,6 +145,25 @@ def deploy(file: str) -> None:
 
     for name, info in agents.items():
         click.echo(f"Deploying {name}...")
+
+        config = dict(info["config"])
+        workspace_path = info["workspace"]
+
+        upload_files: dict[str, tuple] = {
+            "archive": ("archive.tar.gz", archive, "application/gzip"),
+        }
+
+        if workspace_path:
+            click.echo(f"  Packaging workspace {workspace_path}...")
+            ws_archive = _make_archive(workspace_path)
+            click.echo(f"  Workspace archive size: {len(ws_archive)} bytes")
+            upload_files["workspace_archive"] = (
+                "workspace.tar.gz",
+                ws_archive,
+                "application/gzip",
+            )
+            config["workspace"] = "__uploaded__"
+
         try:
             r = httpx.post(
                 f"{url}/api/agents",
@@ -134,9 +171,9 @@ def deploy(file: str) -> None:
                     "name": name,
                     "source_filename": source_filename,
                     "function_name": info["function_name"],
-                    "config_json": json.dumps(info["config"]),
+                    "config_json": json.dumps(config),
                 },
-                files={"archive": ("archive.tar.gz", archive, "application/gzip")},
+                files=upload_files,
                 headers=headers,
                 timeout=120,
             )

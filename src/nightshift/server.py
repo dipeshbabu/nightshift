@@ -151,12 +151,15 @@ async def deploy_agent(
     function_name: str = Form(),
     config_json: str = Form(),
     archive: UploadFile = File(),
+    workspace_archive: UploadFile | None = File(default=None),
     tenant_id: str = Depends(_auth_dependency),
 ):
     """Deploy an agent to the platform.
 
     Accepts a multipart form with agent metadata and a tar.gz archive
-    of the project directory.
+    of the project directory.  An optional *workspace_archive* (tar.gz)
+    is extracted to ``{storage_path}/__workspace__/`` so that the agent
+    can reference it at run time.
     """
     registry = _get_registry()
 
@@ -198,6 +201,24 @@ async def deploy_agent(
             tar.extractall(storage_path, filter="data")
     finally:
         os.unlink(tmp_path)
+
+    # Handle optional workspace archive
+    if workspace_archive is not None:
+        ws_dir = os.path.join(storage_path, "__workspace__")
+        if os.path.isdir(ws_dir):
+            shutil.rmtree(ws_dir)
+        os.makedirs(ws_dir, exist_ok=True)
+
+        with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+            ws_content = await workspace_archive.read()
+            tmp.write(ws_content)
+            ws_tmp_path = tmp.name
+
+        try:
+            with tarfile.open(ws_tmp_path, "r:gz") as tar:
+                tar.extractall(ws_dir, filter="data")
+        finally:
+            os.unlink(ws_tmp_path)
 
     agent = await registry.upsert_agent(
         tenant_id=tenant_id,
@@ -268,9 +289,13 @@ def _build_registered_agent(
     env = config_data.get("env", {})
     if runtime_env:
         env.update(runtime_env)
+
+    workspace = config_data.get("workspace", "")
+    if workspace == "__uploaded__":
+        workspace = os.path.join(agent.storage_path, "__workspace__")
+
     agent_config = AgentConfig(
-        # Workspace is the user's codebase, not the agent source archive
-        workspace=config_data.get("workspace", ""),
+        workspace=workspace,
         vcpu_count=config_data.get("vcpu_count", 2),
         mem_size_mib=config_data.get("mem_size_mib", 2048),
         timeout_seconds=config_data.get("timeout_seconds", 1800),

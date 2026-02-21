@@ -29,14 +29,15 @@ async def create_overlay(
     workspace_path: str,
     env_vars: dict[str, str],
     overlay_dir: str | None = None,
+    agent_pkg_path: str = "",
 ) -> str:
     """Create a CoW overlay rootfs for a VM.
 
     1. Create a sparse copy of the base rootfs
     2. Mount the overlay
     3. Copy workspace into /workspace
-    4. Write env vars to /etc/nightshift/env
-    5. Write prompt to /workspace/.nightshift-prompt.txt
+    4. Copy agent package into /opt/nightshift/agent_pkg (if provided)
+    5. Write env vars to /etc/nightshift/env
     6. Unmount and return overlay path
 
     Returns the path to the overlay rootfs image.
@@ -66,6 +67,13 @@ async def create_overlay(
         if os.path.exists(ws_dest):
             shutil.rmtree(ws_dest)
         shutil.copytree(workspace_path, ws_dest, symlinks=True)
+
+        # Copy agent package into /opt/nightshift/agent_pkg (separate from workspace)
+        if agent_pkg_path:
+            pkg_dest = os.path.join(mount_point, "opt", "nightshift", "agent_pkg")
+            if os.path.exists(pkg_dest):
+                shutil.rmtree(pkg_dest)
+            shutil.copytree(agent_pkg_path, pkg_dest, symlinks=True)
 
         # Write env vars
         env_dir = os.path.join(mount_point, "etc", "nightshift")

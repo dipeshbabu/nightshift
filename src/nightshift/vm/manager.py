@@ -50,6 +50,11 @@ class VMConfig:
     # giving the guest agent access to the project files it needs to work on.
     workspace_path: str
 
+    # Host directory containing the packaged agent code. Copied into the
+    # overlay at /opt/nightshift/agent_pkg so the agent source is separate
+    # from the user's workspace.
+    agent_pkg_path: str = ""
+
     # Environment variables injected into the guest rootfs (written to /etc/environment).
     # Typically includes API keys and config the guest agent needs at runtime.
     env_vars: dict[str, str] = field(default_factory=dict)
@@ -149,6 +154,7 @@ class FirecrackerVM:
             workspace_path=self.config.workspace_path,
             env_vars=self.config.env_vars,
             overlay_dir=self._overlay_dir,
+            agent_pkg_path=self.config.agent_pkg_path,
         )
 
         # Create a TAP device. Returns a TapConfig with host_ip, guest_ip,

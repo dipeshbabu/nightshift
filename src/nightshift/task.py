@@ -25,7 +25,7 @@ from nightshift.protocol.packaging import cleanup_package, package_agent
 from nightshift.sdk.app import RegisteredAgent
 from nightshift.vm.manager import FirecrackerVM, VMConfig
 
-AGENT_PKG_SUBDIR = ".nightshift-agent"
+AGENT_PKG_DIR = "/opt/nightshift/agent_pkg"
 
 
 async def run_task(
@@ -58,9 +58,10 @@ async def run_task(
             prompt=prompt,
         )
 
-        # Stage workspace + agent package into one directory.
-        # The workspace contents become /workspace in the VM and the
-        # agent package is nested at /workspace/.nightshift-agent.
+        # Stage workspace into its own directory — only user files go here.
+        # The agent package is passed separately via VMConfig and gets
+        # copied to /opt/nightshift/agent_pkg in the overlay rootfs, keeping
+        # it out of /workspace so the agent only sees user content.
         staging_dir = tempfile.mkdtemp(prefix="nightshift-staging-")
         shutil.copytree(
             workspace,
@@ -69,7 +70,6 @@ async def run_task(
             ignore_dangling_symlinks=True,
             dirs_exist_ok=True,
         )
-        shutil.copytree(pkg_dir, os.path.join(staging_dir, AGENT_PKG_SUBDIR))
 
         # Build env vars for the VM
         env_vars: dict[str, str] = {}
@@ -79,12 +79,13 @@ async def run_task(
                 env_vars[key] = val
         env_vars.update(agent.config.env)
         env_vars["NIGHTSHIFT_WORKSPACE"] = "/workspace"
-        env_vars["NIGHTSHIFT_AGENT_DIR"] = f"/workspace/{AGENT_PKG_SUBDIR}"
+        env_vars["NIGHTSHIFT_AGENT_DIR"] = AGENT_PKG_DIR
 
         vm_config = VMConfig(
             kernel_path=config.kernel_path,
             base_rootfs_path=config.base_rootfs_path,
             workspace_path=staging_dir,
+            agent_pkg_path=pkg_dir,
             env_vars=env_vars,
             vcpu_count=agent.config.vcpu_count,
             mem_size_mib=agent.config.mem_size_mib,
