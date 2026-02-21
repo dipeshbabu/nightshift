@@ -1,58 +1,40 @@
 ---
-title: Introduction
-description: Turn Coding Agents into knowledge workers
+title: "Nightshift"
+sidebarTitle: "Introduction"
+description: "Platform for scurely running agents in isolated sandboxes."
 ---
 
-<Warning>
-  Nightshift is currently in its infancy and is subject to change and incompleteness.
-  If you find a bug, or have an idea to improve Nightshift, please raise an issue on [Github](https://github.com/nightshiftco/nightshift/tree/main) and join our [Slack](https://join.slack.com/t/nightshiftoss/shared_invite/zt-3p5dshiiq-hjB8558QvURDgqqCI7e8RQ) for updates.
-</Warning>
+<img src="/logo/kokapo.gif" alt="Nightshift mascot" width="200" style={{ margin: "0 auto", display: "block" }} />
 
-Nightshift is a CLI that takes Coding Agents like [OpenCode](https://opencode.ai/), [Claude Code](https://code.claude.com/docs/en/overview), and [Codex](https://developers.openai.com/codex/cli/) and turns them into autonomous problem solvers that can complete complex, long-running knowledge work tasks.
+Nightshift runs Agents in microVMs using [Firecracker](https://firecracker-microvm.github.io/) for [hardware level isolation](https://linux-kvm.org/page/Main_Page). 
+Each agent gets its own isolated VM with dedicated vCPUs, memory, filesystem, and network and streams results back via Server-Sent Events.
 
-## Why Nightshift
+## What is Nightshift?
 
-Coding Agents are powerful, but they're designed for interactive, single-turn workflows. 
-Nightshift treats the Coding Agent as infrastructure and gives the process the environment, feedback loops, and isolation it needs to [solve complex problems autonomously](https://www.anthropic.com/engineering/building-c-compiler).
+Nightshift is an open source platform for deploying and running Agents in secure, efficient, isolated environments. 
+You write an agent as a Python async generator, deploy it with a single CLI command, and run it on demand. 
+Each run spins up a dedicated Firecracker microVM with its own resources and network, executes your agent, and streams events back in real time.
 
-Nightshift provides:
+A hosted platform is available at `api.nightshift.sh` or you can self-host on any linux machine with KVM support.
 
-- **Isolated environments** — Each agent runs in its own [prefix directory](/system/prefix-directory) with pinned tools, a managed Python installation, XDG isolation, and a lightweight sandbox. Nothing touches your host system.
-- **Autonomous execution** — The [Ralph loop](/ralph-loop) pairs a worker agent with a boss agent. The worker codes, the boss evaluates, and the loop continues until the task is done.
-- **Concurrent task isolation** — [Worktrees](/worktrees) give each task its own git branch and working directory so multiple tasks can run in parallel without conflicts. The agent learns from the collective work of all other agents.
-- **Reproducibility** — Every tool version is pinned. Every environment is built from scratch. The same install command produces the same result on any machine.
+## How it works
 
-## How It Works
+1. **Install** the SDK: `uv add nightshift-sdk` (or install as a uv tool)
+2. **Write** an agent as a Python async generator decorated with `@app.agent()`
+3. **Deploy** it to the platform with `nightshift deploy`
+4. **Run** it on demand with `nightshift run` each run gets its own isolated microVM
+5. **Stream** results back in real time via SSE
 
-```bash
-# Install the toolchain into an isolated prefix
-nightshift install --prefix ~/.my-agent
+## This manual covers
 
-# Opens OpenCode setting the prefix as your working directory 
-nightshift run
-
-# Run Ralph with Job TUI
-nightshift run --ralph --serve --run-nightshift-tui
-
-# Run Ralph server
-nightshift run --ralph --serve --serve-port 3000
-```
-
-Nightshift [installs](/install) OpenCode, uv, ripgrep, and ty into a self-contained directory, scaffolds a Python workspace, and gives you a ready-to-go agent environment. From there you can run interactively or kick off autonomous tasks through the [Ralph server API](/system/ralph-server).
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Installation" icon="download" href="/installation">
-    Download the binary or build from source
+<CardGroup cols={3}>
+  <Card title="Deployment" icon="server" href="/deployment/provision">
+    Provision a c5.metal instance, verify the install, start the server, and manage costs.
   </Card>
-  <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Install a prefix and launch your first agent
+  <Card title="SDK" icon="code" href="/sdk/quickstart">
+    Install the SDK, write agents, use the Claude Agent SDK, and follow the CLI workflow.
   </Card>
-  <Card title="Ralph Loop" icon="rotate" href="/ralph-loop">
-    Learn how autonomous worker/boss execution works
-  </Card>
-  <Card title="Contributing" icon="code-pull-request" href="/contributing">
-    Help us add support for more agent harnesses
+  <Card title="Administration" icon="gear" href="/administration/api-keys">
+    Manage API keys, backups, monitoring, troubleshooting, and security.
   </Card>
 </CardGroup>

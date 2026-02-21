@@ -1,0 +1,42 @@
+---
+title: "AgentConfig Reference"
+sidebarTitle: "AgentConfig"
+description: "Configuration options for Nightshift agents: vCPUs, memory, timeouts, and environment variables."
+---
+
+## AgentConfig fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `vcpu_count` | `2` | vCPUs allocated to the VM |
+| `mem_size_mib` | `2048` | Memory in MiB (2048 = 2 GiB) |
+| `timeout_seconds` | `1800` | Max wall-clock time (30 min) before the VM is killed |
+| `forward_env` | `[]` | Host env var names to copy into the VM |
+| `env` | `{}` | Static env vars baked into the config |
+
+## Example
+
+```python
+from nightshift import NightshiftApp, AgentConfig
+
+app = NightshiftApp()
+
+@app.agent(AgentConfig(
+    vcpu_count=4,
+    mem_size_mib=4096,
+    timeout_seconds=3600,
+    forward_env=["ANTHROPIC_API_KEY"],
+    env={"LOG_LEVEL": "debug"},
+))
+async def heavy_agent(prompt: str):
+    yield {"type": "agent.message", "content": f"Running with 4 vCPUs: {prompt}"}
+```
+
+## Environment variable flow
+
+- **`forward_env`**: Names of environment variables on the _caller's_ machine. The CLI reads these at `nightshift run` time and injects them into the VM. They are never stored on the platform.
+- **`env`**: Static key-value pairs baked into the agent config. These are stored on the platform alongside the agent definition.
+
+<Warning>
+Never put secrets in `env` — they are stored in the database. Use `forward_env` for API keys and other credentials so they flow through memory only.
+</Warning>

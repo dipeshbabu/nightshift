@@ -1,0 +1,46 @@
+---
+title: "Cost Management"
+sidebarTitle: "Cost Management"
+description: "Automate instance scheduling with Lambda and EventBridge to control costs."
+---
+
+A `c5.metal` instance costs ~$4.08/hr. Leaving it running 24/7 is expensive for development and testing.
+
+## Automated scheduling with cron.sh
+
+To automatically start the instance at 8 AM ET and stop at midnight ET on weekdays:
+
+```bash
+cd infra
+bash cron.sh
+```
+
+## What cron.sh creates
+
+<Steps>
+  <Step title="Elastic IP">
+    Allocates an Elastic IP for stable addressing across stop/start cycles. Updates `infra/.instance` with the EIP.
+  </Step>
+  <Step title="IAM role">
+    Creates `nightshift-lambda-role` with EC2 start/stop permissions scoped to instances tagged `nightshift-dev`.
+  </Step>
+  <Step title="Lambda functions">
+    Creates `nightshift-start` and `nightshift-stop` 
+  </Step>
+  <Step title="Scheduler IAM role">
+    Creates `nightshift-scheduler-role` with `lambda:InvokeFunction` permission.
+  </Step>
+  <Step title="EventBridge Scheduler rules">
+    Schedules in America/New_York timezone:
+    - **Start**: `cron(0 8 ? * MON-FRI *)` — 8:00 AM ET, Monday–Friday
+    - **Stop**: `cron(0 0 ? * TUE-SAT *)` — 12:00 AM ET, Tuesday–Saturday
+  </Step>
+</Steps>
+
+<Tip>
+After running `cron.sh`, use the Elastic IP for all connections instead of the ephemeral public IP.
+</Tip>
+
+<Info>
+The Lambda functions find instances by tag (`Name: nightshift-dev`), not by hardcoded instance ID, so they continue to work if you reprovision.
+</Info>

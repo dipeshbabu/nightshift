@@ -1,0 +1,99 @@
+---
+title: "Start the Server"
+sidebarTitle: "Server"
+description: "Provision a bootstrap key, start the server, and deploy with TLS."
+---
+
+## Bootstrap API key
+
+The server requires a bootstrap key to authenticate the first user. Generate one locally:
+
+```bash
+python -c "import secrets; print(f'ns_{secrets.token_hex(16)}')"
+```
+
+Save the output! this is your bootstrap key. It will be set as the `NIGHTSHIFT_API_KEY` environment variable so the server can seed it into the database at startup.
+
+<Warning>
+Without a bootstrap key, the server starts with an empty credentials table and all API requests will return 401.
+</Warning>
+
+## Production deployment
+
+For production, use `infra/production.sh` to set up Caddy (auto-TLS) and systemd. This gives you HTTPS with automatic Let's Encrypt certificates and a service that restarts on failure.
+
+### Prerequisites
+
+- A bare-metal instance with KVM support (e.g., c5.metal)
+- DNS A record pointing your hostname to the instance's public IP
+- Ports 80 and 443 open in the security group / firewall
+
+### Run the production script
+
+```bash
+./infra/production.sh --hostname api.example.com --api-key ns_<your-key>
+```
+
+The script:
+
+<Steps>
+  <Step title="Install Caddy">
+    Installs Caddy from the official apt repository (if not already present).
+  </Step>
+  <Step title="Create systemd service">
+    Creates `nightshift-serve.service` that runs `nightshift serve --port 3000` as a daemon with automatic restart. Sets `NIGHTSHIFT_API_KEY` in the service environment.
+  </Step>
+  <Step title="Configure Caddy">
+    Writes a Caddyfile that reverse-proxies your hostname to `localhost:3000`. Caddy handles TLS certificate provisioning and renewal automatically via Let's Encrypt.
+  </Step>
+  <Step title="Start services">
+    Enables and starts both `nightshift-serve` and `caddy` via systemd.
+  </Step>
+</Steps>
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--hostname` | (required) | FQDN for TLS — e.g., `api.nightshift.sh` |
+| `--api-key` | (required) | Bootstrap key to set as `NIGHTSHIFT_API_KEY` in the systemd service |
+| `--port` | `3000` | Backend port for `nightshift serve` |
+
+### Authenticate
+
+Once the server is running, use the bootstrap key to log in:
+
+```bash
+nightshift login --url https://api.example.com --api-key ns_<your-key>
+```
+
+### Verify
+
+```bash
+curl https://api.example.com/health
+# {"status":"ok"}
+```
+
+### Service management
+
+```bash
+# View logs
+sudo journalctl -u nightshift-serve -f
+sudo journalctl -u caddy -f
+
+# Restart
+sudo systemctl restart nightshift-serve
+
+# Stop
+sudo systemctl stop nightshift-serve
+```
+
+## One-step provision + deploy
+
+If you're launching a new instance from scratch, `setup.sh` supports a `--production` flag that provisions the EC2 instance and runs the production deployment in one step:
+
+```bash
+./infra/setup.sh --production --hostname api.example.com --api-key ns_<your-key>
+```
+
+This opens ports 80/443 on the security group, provisions the instance with all dependencies, syncs the project, and runs `production.sh` on the remote machine automatically.

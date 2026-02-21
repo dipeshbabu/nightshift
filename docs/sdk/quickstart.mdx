@@ -1,0 +1,128 @@
+---
+title: "Quickstart"
+sidebarTitle: "Quickstart"
+description: "Install the SDK, write your first agent, and deploy it to the platform."
+---
+
+## Install
+
+```bash
+uv add nightshift-sdk
+```
+
+This provides the SDK (`NightshiftApp`, `AgentConfig`) and the CLI (`nightshift` command).
+
+
+## CLI workflow
+
+<Steps>
+<Step title="Initialize a project">
+```bash
+mkdir agent
+cd agent
+uv init
+```
+    <Note>
+    You'll need a pyproject.toml in the root of your directory. This is how Nightshift knows your agent's depedancies
+    </Note>
+
+</Step>
+<Step title="Create the agent">
+
+Create a Python file with a `NightshiftApp` and one or more `@app.agent()` functions:
+
+```python my_agent.py
+from nightshift import NightshiftApp, AgentConfig
+
+app = NightshiftApp()
+
+@app.agent(AgentConfig(
+    vcpu_count=2,
+    mem_size_mib=2048,
+))
+async def my_agent(prompt: str):
+    yield {"type": "agent.message", "content": f"Received: {prompt}"}
+```
+
+- The function must be `async def` and use `yield` (async generator)
+- `prompt: str` is the only parameter it's what the user passes to your function at runtime
+- Each `yield` sends an SSE event back to the caller 
+- Yielded values can be dicts, dataclasses, or Pydantic models; they're auto-serialized with a `type` field and `timestamp` added if missing
+- Inside the VM, the workspace is always at `/workspace`
+    <Note>
+    You'll need a pyproject.toml in the root of your directory. This is how Nightshift knows your agent's depedancies
+    </Note>
+
+</Step>
+  <Step title="Login">
+    ```bash
+    nightshift login --url https://api.nightshift.sh --api-key ns_<key>
+    ```
+    Saves credentials to `~/.nightshift/config.toml`. 
+
+    <Note>
+    If you're running a self-hosted platform, replace `api.nightshift.sh` with your server's hostname or `http://<IP>:3000`.
+    </Note>
+  </Step>
+  <Step title="Deploy">
+    ```bash
+    nightshift deploy my_agent.py
+    ```
+    The CLI imports the file, discovers all `@app.agent()` functions, finds the project root (walks up to `pyproject.toml`)
+    , creates a tar.gz archive, and uploads to the platform.
+  </Step>
+  <Step title="List agents">
+
+    ```bash
+    nightshift agents
+    ```
+
+    This will show the agents you have deployed in Nightshift.
+    
+  </Step>
+  <Step title="Run an agent">
+    ```bash
+    nightshift run my_agent -p "What does this code do?" -f
+    ```
+    <Note>
+    - `-f` / `--follow` streams events to stdout in real time
+    - Without `-f`, prints the run ID and exits
+    </Note>
+  </Step>
+  <Step title="View logs">
+    ```bash
+    nightshift logs <run_id>
+    ```
+  </Step>
+  <Step title="Delete an agent">
+    ```bash
+    nightshift agents rm my_agent
+    ```
+  </Step>
+</Steps>
+
+## Multiple agents per file
+
+```python
+app = NightshiftApp()
+
+@app.agent(AgentConfig(vcpu_count=2))
+async def explorer(prompt: str):
+    ...
+
+@app.agent(AgentConfig(vcpu_count=4, mem_size_mib=4096))
+async def builder(prompt: str):
+    ...
+```
+
+`nightshift deploy` uploads both. Each gets its own registry entry and can be run independently.
+
+## Custom agent names
+
+```python
+@app.agent(AgentConfig(), name="my-custom-name")
+async def internal_fn(prompt: str):
+    ...
+```
+
+The agent registers as `my-custom-name`, not `internal_fn`.

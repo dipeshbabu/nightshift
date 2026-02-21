@@ -1,0 +1,77 @@
+---
+title: "Provision Instance"
+sidebarTitle: "Provision"
+description: "Set up a c5.metal EC2 instance with Firecracker, KVM, and all dependencies."
+---
+
+
+## Prerequisites
+
+- AWS CLI configured with credentials (EC2, IAM, Lambda, EventBridge Scheduler permissions)
+- `curl` and `jq` installed locally
+- The `infra/` directory from this repository
+
+## Run setup
+
+```bash
+cd infra
+bash setup.sh
+```
+
+For a production deployment with TLS in one step:
+
+```bash
+bash setup.sh --production --hostname api.example.com
+```
+
+This opens ports 80/443, provisions the instance, and runs `production.sh` on the remote machine to install Caddy + systemd services. See [Server](/deployment/server) for details.
+
+## What setup.sh does
+
+<Steps>
+  <Step title="SSH keypair">
+    Creates (or reuses) the `nightshift-dev` SSH keypair and saves the `.pem` to `~/.ssh/nightshift-dev.pem`.
+  </Step>
+  <Step title="Security group">
+    Creates (or reuses) a security group locked to your current public IP on port 22. With `--production`, also opens ports 80 and 443 for Caddy's auto-TLS.
+  </Step>
+  <Step title="AMI lookup">
+    Finds the latest Ubuntu 22.04 AMI from Canonical.
+  </Step>
+  <Step title="Launch instance">
+    Launches a `c5.metal` instance (96 vCPUs, 192 GiB RAM, 100 GB gp3 root volume).
+  </Step>
+  <Step title="Bootstrap">
+    Runs a user-data bootstrap script that installs:
+    - Firecracker (latest release from GitHub) + `jailer` binary
+    - Linux kernel (`vmlinux`) from Firecracker CI S3 bucket → `/opt/nightshift/vmlinux`
+    - Ubuntu rootfs converted to ext4 (2 GB sparse) → `/opt/nightshift/rootfs.ext4`
+    - KVM module loaded + `/dev/kvm` permissions via setfacl + udev rule
+    - Python via `uv` package manager
+    - Node.js 22 LTS + Claude Code (npm global)
+    - IP forwarding enabled via sysctl
+  </Step>
+  <Step title="Poll for readiness">
+    Polls SSH and waits for `/opt/nightshift/.setup-done` marker.
+  </Step>
+  <Step title="Write connection details">
+    Writes connection details to `infra/.instance`.
+  </Step>
+</Steps>
+
+<Note>
+Metal instances take 5–8 minutes to boot. If setup fails, debug with:
+
+```bash
+ssh -i ~/.ssh/nightshift-dev.pem ubuntu@<IP> 'tail -50 /var/log/nightshift-setup.log'
+```
+</Note>
+
+## Tear down
+
+```bash
+cd infra
+bash teardown.sh
+```
+
+Terminates the instance and removes `infra/.instance`. The SSH keypair and security group are preserved for next time.

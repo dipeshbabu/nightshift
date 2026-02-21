@@ -1,0 +1,102 @@
+---
+title: "API Keys"
+sidebarTitle: "API Keys"
+description: "Bootstrap key provisioning, user key management, and multi-tenant isolation."
+---
+
+## Overview
+
+Keys authenticate users against the platform. Format: `ns_<32 hex chars>`. Only the SHA-256 hash is stored; raw keys cannot be recovered from the database.
+
+There are two kinds of keys:
+
+- **Bootstrap key**: provisioned by the operator before the server starts. This is the initial credential that makes all other operations possible.
+- **User keys**: created through the authenticated API by someone who already has a valid key.
+
+## Bootstrap key
+
+The bootstrap key is set via the `NIGHTSHIFT_API_KEY` environment variable. When the server starts, it hashes the value and stores it in the database. This is the only key that bypasses the API. 
+
+The operator generates the key themselves:
+
+```bash
+python -c "import secrets; print(f'ns_{secrets.token_hex(16)}')"
+```
+
+Then provides it when deploying:
+
+```bash
+./infra/production.sh --hostname api.example.com --api-key ns_<your-key>
+```
+
+Or sets it manually in the server environment:
+
+```bash
+export NIGHTSHIFT_API_KEY=ns_<your-key>
+uv run nightshift serve
+```
+
+<Warning>
+The bootstrap key must be provisioned before the server can authenticate any requests. Without it, the database has no keys and all API calls will return 401.
+</Warning>
+
+Use the bootstrap key to authenticate the CLI:
+
+```bash
+nightshift login --url https://api.nightshift.sh --api-key ns_<your-key>
+```
+
+## Generate user keys
+
+Once authenticated, generate additional keys through the API:
+
+```bash
+nightshift api-key generate --label "customer-acme"
+```
+
+This calls `POST /api/api-keys` on the server. The server generates the key, stores its hash, and returns the raw key once.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--tenant` | caller's tenant | Tenant ID to scope the key to |
+| `--label` | `""` | Human-readable label for identification |
+
+<Warning>
+The raw key is only shown once. Store it somewhere safe.
+</Warning>
+
+## List keys
+
+```bash
+nightshift api-key list
+```
+
+Returns keys scoped to your tenant:
+
+```
+HASH PREFIX      TENANT           LABEL                CREATED
+--------------------------------------------------------------------------
+8f3a2b1c9d0e...  default          bootstrap            2026-02-20T...
+a2b3c4d5e6f7...  default          customer-acme        2026-02-20T...
+```
+
+## Revoke a key
+
+```bash
+nightshift api-key revoke 8f3a2b1c9d0e
+```
+
+Use the hash prefix from `api-key list`. Provide more characters if the prefix is ambiguous.
+
+## Multi-tenant isolation
+
+Agents and runs are scoped by tenant ID. One tenant cannot see or run another's agents. 
+
+```bash
+nightshift api-key generate --tenant acme-corp --label "acme production"
+nightshift api-key generate --tenant globex --label "globex dev"
+```
+
+<Info>
+The tenant ID in the API key determines which agents and runs a user can access. There is no cross-tenant visibility.
+</Info>

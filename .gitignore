@@ -1,9 +1,8 @@
-.env
-.env.*
-node_modules/
-dist/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
 build/
-tmp/
-/eval/
-PROMPT.md
-.agents/
+dist/

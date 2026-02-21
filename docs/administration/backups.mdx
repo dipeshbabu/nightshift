@@ -1,0 +1,75 @@
+---
+title: "Backups & Restore"
+sidebarTitle: "Backups"
+description: "Back up the SQLite database and agent files. Restore from backups."
+---
+
+## Overview
+
+Nightshift uses SQLite. The database is a single file at `/opt/nightshift/nightshift.db`.
+
+## Database schema
+
+| Table | Contents |
+|-------|----------|
+| `agents` | id, tenant_id, name, source_filename, function_name, config_json, storage_path, created_at, updated_at. UNIQUE on (tenant_id, name). |
+| `runs` | id, agent_id, tenant_id, prompt, status (started/completed/error), created_at, completed_at, error. |
+| `api_keys` | key_hash (SHA-256, primary key), tenant_id, label, created_at. |
+
+## Database backup
+
+<Tabs>
+  <Tab title="Manual">
+    Safe while the server is running:
+
+    ```bash
+    sudo sqlite3 /opt/nightshift/nightshift.db \
+      ".backup /opt/nightshift/backups/nightshift-$(date +%Y%m%d-%H%M%S).db"
+    ```
+
+    <Warning>
+    Do NOT `cp` the file while the server is running,SQLite may have uncommitted WAL data. Always use `sqlite3 .backup` or stop the server first.
+    </Warning>
+  </Tab>
+  <Tab title="Automated (cron)">
+    ```bash
+    sudo mkdir -p /opt/nightshift/backups
+    sudo crontab -e
+    ```
+
+    Add the following line:
+
+    ```
+    0 3 * * * sqlite3 /opt/nightshift/nightshift.db ".backup /opt/nightshift/backups/nightshift-$(date +\%Y\%m\%d).db" && find /opt/nightshift/backups -name "*.db" -mtime +7 -delete
+    ```
+
+    Backs up at 3 AM daily. Deletes backups older than 7 days.
+  </Tab>
+</Tabs>
+
+## Agent file backup
+
+Source code is stored on disk, not in the database:
+
+```bash
+sudo tar czf /opt/nightshift/backups/agents-$(date +%Y%m%d).tar.gz \
+  -C /opt/nightshift agents/
+```
+
+## Restore from backup
+
+<Steps>
+  <Step title="Stop the server">
+    Stop the running Nightshift server process.
+  </Step>
+  <Step title="Restore database">
+    ```bash
+    sudo cp /opt/nightshift/backups/nightshift-20260220.db /opt/nightshift/nightshift.db
+    ```
+  </Step>
+  <Step title="Restart the server">
+    ```bash
+    sudo nightshift serve
+    ```
+  </Step>
+</Steps>

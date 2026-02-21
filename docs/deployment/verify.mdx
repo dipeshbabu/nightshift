@@ -1,0 +1,31 @@
+---
+title: "Verify Installation"
+sidebarTitle: "Verify"
+description: "Confirm that Firecracker, the kernel, rootfs, and dependencies are correctly installed."
+---
+
+## Verify the install
+
+SSH into the instance and check each component:
+
+```bash
+ssh -i ~/.ssh/nightshift-dev.pem ubuntu@<PUBLIC_IP>
+```
+
+```bash
+firecracker --version
+ls /opt/nightshift/vmlinux /opt/nightshift/rootfs.ext4
+uv --version
+```
+
+All three commands should succeed without errors.
+
+## Verify production deployment
+
+If you deployed with `production.sh` or `setup.sh --production`, verify TLS and the health endpoint:
+
+```bash
+curl https://api.example.com/health
+# {"status":"ok"}
+```
+

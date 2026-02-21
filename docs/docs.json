@@ -1,6 +1,7 @@
 {
-  "theme": "mint",
+  "$schema": "https://mintlify.com/docs.json",
   "name": "Nightshift",
+  "theme": "mint",
   "colors": {
     "primary": "#c4f042",
     "light": "#d4ff4f",
@@ -12,7 +13,7 @@
     "href": "https://nightshift.sh"
   },
   "favicon": "/logo/kokapo.svg",
-  "description": "Bun-native CLI for isolated, reproducible OpenCode environments",
+  "description": "Run agents, go burr",
   "appearance": {
     "default": "dark"
   },
@@ -26,31 +27,31 @@
       {
         "group": "Getting Started",
         "pages": [
-          "introduction",
-          "installation",
-          "quickstart"
+          "introduction"
         ]
       },
       {
-        "group": "Concepts",
+        "group": "Deployment",
         "pages": [
-          "install",
-          "ralph-loop",
-          "worktrees"
+          "deployment/provision",
+          "deployment/verify",
+          "deployment/server",
+          "deployment/cost-management",
+          "deployment/architecture"
         ]
       },
       {
-        "group": "System",
+        "group": "SDK",
         "pages": [
-          "system/prefix-directory",
-          "system/ralph-server",
-          "system/gollum"
+          "sdk/quickstart",
+          "sdk/agent-config"
         ]
       },
       {
-        "group": "Development",
+        "group": "Administration",
         "pages": [
-          "contributing"
+          "administration/api-keys",
+          "administration/backups"
         ]
       }
     ]

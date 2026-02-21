@@ -1,0 +1,2 @@
+Hello from the host workspace!
+This file was copied into the Firecracker VM.

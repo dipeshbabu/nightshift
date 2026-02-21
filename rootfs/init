@@ -1,0 +1,42 @@
+#!/bin/sh
+#
+# Nightshift VM init script.
+# Runs as PID 1 inside the Firecracker VM.
+#
+
+# Mount essential filesystems
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mount -t tmpfs tmpfs /tmp
+
+# Configure network from kernel command line
+# Default: 172.16.x.2/30 with gateway at 172.16.x.1
+# The IP is passed via kernel boot args: ip=GUEST::GATEWAY:MASK::eth0:off
+GUEST_IP=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ip=' | cut -d= -f2 | cut -d: -f1)
+GATEWAY=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ip=' | cut -d= -f2 | cut -d: -f3)
+MASK=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ip=' | cut -d= -f2 | cut -d: -f4)
+
+if [ -n "$GUEST_IP" ]; then
+    ip addr add "${GUEST_IP}/${MASK}" dev eth0
+    ip link set eth0 up
+    ip route add default via "$GATEWAY"
+fi
+
+# Set up DNS
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+
+# Load environment
+if [ -f /etc/nightshift/env ]; then
+    set -a
+    . /etc/nightshift/env
+    set +a
+fi
+
+# Add uv and Python to PATH
+export PATH="/root/.local/bin:$PATH"
+
+# Start the agent
+cd /workspace
+exec python -m nightshift.agent 2>&1 | tee /var/log/nightshift-agent.log

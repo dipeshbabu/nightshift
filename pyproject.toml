@@ -1,0 +1,69 @@
+[project]
+name = "nightshift-sdk"
+version = "0.3.1"
+description = "Nightshift — autonomous agent orchestrator with Firecracker VMs"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+readme = "README.md"
+authors = [{name = "Nightshift Contributors"}]
+keywords = ["agents", "firecracker", "orchestrator", "microvm", "ai", "claude"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: System :: Distributed Computing",
+]
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "httpx-sse",
+    "sse-starlette",
+    "claude-agent-sdk",
+    "anthropic",
+    "aiosqlite>=0.22.1",
+    "click",
+    "tomli-w",
+]
+
+[project.urls]
+Homepage = "https://nightshift.sh"
+Documentation = "https://docs.nightshift.sh"
+Repository = "https://github.com/tensor-ninja/nightshift"
+Issues = "https://github.com/tensor-ninja/nightshift/issues"
+
+[project.scripts]
+nightshift = "nightshift.cli.main:cli"
+
+[dependency-groups]
+dev = [
+    "ty",
+    "ruff",
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nightshift"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/nightshift/agent/prompts/*.py" = ["E501"]

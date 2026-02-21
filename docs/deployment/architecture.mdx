@@ -1,0 +1,18 @@
+---
+title: "Architecture"
+sidebarTitle: "Architecture"
+description: "Platform architecture, VM lifecycle, and data locations."
+---
+
+
+## Data locations
+
+| Path | Contents |
+|------|----------|
+| `/opt/nightshift/nightshift.db` | SQLite database (agents, runs, api_keys tables) |
+| `/opt/nightshift/agents/{uuid}/` | Deployed agent source files (one directory per agent) |
+| `/opt/nightshift/vmlinux` | Linux kernel for Firecracker VMs |
+| `/opt/nightshift/rootfs.ext4` | Base Ubuntu rootfs image (shared, never modified) |
+
+TBD
+

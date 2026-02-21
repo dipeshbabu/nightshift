@@ -11,6 +11,10 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/nightshift-sdk/"><img src="https://img.shields.io/pypi/v/nightshift-sdk" alt="PyPI" /></a>
+</p>
+
+<p align="center">
   <a href="https://nightshift.sh">Website</a> &middot;
   <a href="https://docs.nightshift.sh">Docs</a> &middot;
   <a href="https://join.slack.com/t/nightshiftoss/shared_invite/zt-3p5dshiiq-hjB8558QvURDgqqCI7e8RQ">Slack</a>
@@ -18,77 +22,83 @@
 
 ---
 
-Nightshift is a CLI that takes Coding Agents like [OpenCode](https://opencode.ai/), [Claude Code](https://code.claude.com/docs/en/overview), and [Codex](https://developers.openai.com/codex/cli/) and turns them into autonomous problem solvers that can complete complex, long-running knowledge work tasks.
+# Nightshift
 
-> Nightshift is in early development and subject to change. If you find a bug or have an idea, please [open an issue](https://github.com/nightshiftco/nightshift/issues).
+Autonomous agent orchestrator with Firecracker VM isolation.
 
-## Features
-
-- **Isolated environments** — Each agent runs in its own prefix directory with pinned tools, a managed Python installation, XDG isolation, and a lightweight sandbox. Nothing touches your host system.
-- **Autonomous execution** — The Ralph loop pairs a worker agent with a boss agent. The worker codes, the boss evaluates, and the loop continues until the task is done.
-- **Concurrent task isolation** — Worktrees give each task its own git branch and working directory so multiple tasks can run in parallel without conflicts.
-- **Reproducibility** — Every tool version is pinned. Every environment is built from scratch. The same install command produces the same result on any machine.
+Nightshift runs AI agents in isolated [Firecracker](https://firecracker-microvm.github.io/) microVMs on bare-metal infrastructure. Each agent gets its own VM with a dedicated filesystem, network, and resource limits — so agents can execute code, edit files, and make network calls without affecting the host or each other.
 
 ## Installation
 
-### Download the binary
-
 ```bash
-curl https://nightshift.sh/install | sh
+uv add nightshift-sdk
 ```
 
-### Build from source
-
-Nightshift is a [Bun](https://bun.sh/) project that compiles to a single binary.
+or
 
 ```bash
-git clone git@github.com:nightshiftco/nightshift.git
-cd nightshift
-bun install
-bun run build:single
+pip install nightshift-sdk
 ```
 
-The binary will be output to `dist/nightshift-<os>-<arch>/bin/nightshift`.
+## Quick Start
 
-## Quickstart
+Define an agent with `NightshiftApp` and `AgentConfig`:
+
+```python
+from nightshift import NightshiftApp, AgentConfig
+from claude_agent_sdk import query, ClaudeAgentOptions
+
+app = NightshiftApp()
+
+@app.agent(
+    AgentConfig(
+        workspace="./my-project",
+        vcpu_count=2,
+        mem_size_mib=2048,
+        timeout_seconds=1800,
+    )
+)
+async def code_reviewer(prompt: str):
+    async for message in query(
+        prompt=prompt,
+        options=ClaudeAgentOptions(
+            cwd="/workspace",
+            allowed_tools=["Read", "Glob", "Grep"],
+            model="claude-sonnet-4-6",
+        ),
+    ):
+        yield message
+```
+
+Deploy to a Nightshift platform:
 
 ```bash
-# Install the toolchain into an isolated prefix
-nightshift install --prefix ~/my-agent
-
-# Launch OpenCode with the prefix as the working directory
-nightshift run
-
-# Run the autonomous Ralph loop from a prompt file
-nightshift run --ralph --prompt task.txt
-
-# Start the Ralph HTTP server
-nightshift run --ralph serve --serve-port 3000
-
-# Ralph server with the Jobs TUI
-nightshift run --ralph serve --run-nightshift-tui
+nightshift login --url https://api.nightshift.sh
+nightshift deploy agent.py
+nightshift run code_reviewer --prompt "Review the auth module for security issues"
 ```
 
-## How it works
+Or run locally on a machine with Firecracker:
 
-`nightshift install` downloads OpenCode, uv, ripgrep, and ty into a self-contained prefix directory, scaffolds a Python workspace with common data science packages, and initializes a git repo — everything the agent needs to start working.
+```bash
+nightshift run code_reviewer agent.py --prompt "Review the auth module"
+```
 
-`nightshift run` launches the agent inside that isolated environment with its own `PATH`, XDG directories, and optional sandbox.
+## AgentConfig
 
-`nightshift run --ralph` activates the Ralph loop: a **worker** agent executes the task, a **boss** agent evaluates the output, and the cycle repeats until the boss approves or the iteration limit is reached.
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `workspace` | `""` | Host directory to mount into the VM at `/workspace` |
+| `vcpu_count` | `2` | Number of vCPUs allocated to the VM |
+| `mem_size_mib` | `2048` | Memory in MiB allocated to the VM |
+| `timeout_seconds` | `1800` | Maximum agent execution time (30 min default) |
+| `forward_env` | `[]` | Environment variables to forward from host |
+| `env` | `{}` | Static environment variables set in the VM |
 
 ## Documentation
 
-Full documentation is available at [docs.nightshift.sh](https://docs.nightshift.sh):
-
-- [Installation](https://docs.nightshift.sh/installation) — Download or build from source
-- [Install command](https://docs.nightshift.sh/install) — How the prefix environment is set up
-- [Ralph Loop](https://docs.nightshift.sh/ralph-loop) — Autonomous worker/boss execution
-- [Worktrees](https://docs.nightshift.sh/worktrees) — Concurrent task isolation with git worktrees
-- [Sandbox](https://docs.nightshift.sh/sandbox) — Read-only host filesystem protection
-- [Ralph Server](https://docs.nightshift.sh/system/ralph-server) — HTTP API for submitting tasks
-- [Contributing](https://docs.nightshift.sh/contributing) — How to contribute
+Full documentation at [docs.nightshift.sh](https://docs.nightshift.sh).
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+Apache 2.0 — see [LICENSE](LICENSE).
