@@ -56,8 +56,15 @@ async def run_task(
     # Workspace from agent config takes priority, then platform config.
     # Empty workspace gets a minimal temp dir (cwd would be "/" under systemd).
     workspace = agent.config.workspace or config.workspace
+    workspace_is_temp = False
     if not workspace:
+        if agent.config.stateful:
+            raise RuntimeError(
+                "Stateful agents require a configured workspace "
+                "(set agent.workspace or NIGHTSHIFT_WORKSPACE)."
+            )
         workspace = tempfile.mkdtemp(prefix="nightshift-empty-ws-")
+        workspace_is_temp = True
 
     try:
         # Package agent source code and manifest for VM injection
@@ -120,6 +127,8 @@ async def run_task(
             cleanup_package(pkg_dir)
         if staging_dir:
             shutil.rmtree(staging_dir, ignore_errors=True)
+        if workspace_is_temp and workspace:
+            shutil.rmtree(workspace, ignore_errors=True)
         await log.cleanup(run_id)
 
 

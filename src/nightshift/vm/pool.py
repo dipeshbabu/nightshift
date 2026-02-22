@@ -35,6 +35,7 @@ class _PoolEntry:
     pkg_dir: str
     staging_dir: str
     workspace_dest: str  # original workspace path on host
+    workspace_is_temp: bool = False
     stateful: bool
     busy: bool = False
     idle_task: asyncio.Task | None = field(default=None, repr=False)
@@ -91,16 +92,24 @@ class VMPool:
                 # 2. No idle entry but under the limit → create placeholder
                 if len(entries) < effective_max:
                     workspace = agent.config.workspace or config.workspace
+                    workspace_is_temp = False
                     if not workspace:
+                        if agent.config.stateful:
+                            raise RuntimeError(
+                                "Stateful agents require a configured workspace "
+                                "(set agent.workspace or NIGHTSHIFT_WORKSPACE)."
+                            )
                         # Empty workspace: create a minimal temp dir rather than
-                        # falling back to cwd (which is "/" under systemd).
+                        # falling back to cwd (which is '/' under systemd).
                         workspace = tempfile.mkdtemp(prefix="nightshift-empty-ws-")
+                        workspace_is_temp = True
                     entry = _PoolEntry(
                         vm=None,
                         agent_id=agent_id,
                         pkg_dir="",
                         staging_dir="",
                         workspace_dest=workspace,
+                        workspace_is_temp=workspace_is_temp,
                         stateful=agent.config.stateful,
                         busy=True,
                     )
@@ -306,6 +315,8 @@ class VMPool:
             cleanup_package(entry.pkg_dir)
         if entry.staging_dir:
             shutil.rmtree(entry.staging_dir, ignore_errors=True)
+        if entry.workspace_is_temp and entry.workspace_dest:
+            shutil.rmtree(entry.workspace_dest, ignore_errors=True)
         logger.info("Pool entry cleanup complete for agent %s", entry.agent_id)
 
 
