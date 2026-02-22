@@ -46,7 +46,7 @@ async def my_agent(prompt: str):
 
 - The function must be `async def` and use `yield` (async generator)
 - `prompt: str` is the only parameter it's what the user passes to your function at runtime
-- Each `yield` sends an SSE event back to the caller 
+- Each `yield` sends an SSE event back to the caller
 - Yielded values can be dicts, dataclasses, or Pydantic models; they're auto-serialized with a `type` field and `timestamp` added if missing
 - Inside the VM, the workspace is always at `/workspace`
     <Note>
@@ -58,7 +58,7 @@ async def my_agent(prompt: str):
     ```bash
     nightshift login --url https://api.nightshift.sh --api-key ns_<key>
     ```
-    Saves credentials to `~/.nightshift/config.toml`. 
+    Saves credentials to `~/.nightshift/config.toml`.
 
     <Note>
     If you're running a self-hosted platform, replace `api.nightshift.sh` with your server's hostname or `http://<IP>:3000`.
@@ -78,7 +78,7 @@ async def my_agent(prompt: str):
     ```
 
     This will show the agents you have deployed in Nightshift.
-    
+
   </Step>
   <Step title="Run an agent">
     ```bash
