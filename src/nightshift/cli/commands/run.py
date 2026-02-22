@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 
 import click
@@ -18,20 +17,18 @@ from nightshift.events import TERMINAL_EVENTS
 @click.argument("agent_name")
 @click.option("--prompt", "-p", required=True, help="Prompt to send to the agent")
 @click.option("--follow", "-f", is_flag=True, help="Follow the event stream (like tail -f)")
-def run(agent_name: str, prompt: str, follow: bool) -> None:
+@click.option("--env", "-e", multiple=True, help="Env var to pass (KEY=VALUE)")
+def run(agent_name: str, prompt: str, follow: bool, env: tuple[str, ...]) -> None:
     """Start a run for an agent on the platform."""
     url = get_url()
     headers = get_auth_headers()
 
-    # Forward API keys from the local environment into the VM.
-    # These are injected as per-run env vars so the agent inside the VM
-    # can use them without the server needing to hold every key.
-    _FORWARD_KEYS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
     runtime_env: dict[str, str] = {}
-    for key in _FORWARD_KEYS:
-        val = os.environ.get(key)
-        if val:
-            runtime_env[key] = val
+    for item in env:
+        if "=" not in item:
+            raise click.ClickException(f"Invalid env format: {item!r} (expected KEY=VALUE)")
+        key, value = item.split("=", 1)
+        runtime_env[key] = value
 
     try:
         r = httpx.post(
