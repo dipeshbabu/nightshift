@@ -95,11 +95,14 @@ async def create_tap(vm_id: str) -> TapConfig:
     tap_name = f"tap-{vm_id[:8]}"
     host_ip = f"172.16.{vm_index}.1"
     guest_ip = f"172.16.{vm_index}.2"
-    mask = "255.255.255.252"  # /30 in dotted decimal for kernel ip= boot arg
+    # Keep dotted netmask for Firecracker kernel boot arg ip=... (see vm/manager.py).
+    mask = "255.255.255.252"
+    # iproute2 expects prefix length notation, not dotted netmask.
+    prefix_len = "30"
 
     # Create TAP device
     await _run(f"ip tuntap add dev {tap_name} mode tap")
-    await _run(f"ip addr add {host_ip}/{mask} dev {tap_name}")
+    await _run(f"ip addr add {host_ip}/{prefix_len} dev {tap_name}")
     await _run(f"ip link set {tap_name} up")
 
     # Enable IP forwarding
