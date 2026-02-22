@@ -76,53 +76,13 @@ echo "    protocol/      → packaging.py, events.py"
 # Replace systemd with a minimal shell init. Systemd is too heavy for
 # Firecracker microVMs — it can panic or hang during boot. Our init
 # sets up the essentials (filesystems, network, env) and starts the agent.
+#
+# The init script lives in rootfs/init (single source of truth).
 echo "==> Installing init script"
 # /sbin/init is a symlink to ../lib/systemd/systemd — remove it first
 # so we don't overwrite the systemd binary.
 rm -f "$MOUNT_DIR/sbin/init"
-cat > "$MOUNT_DIR/sbin/init" << 'INIT'
-#!/bin/sh
-#
-# Nightshift VM init — PID 1 inside the Firecracker microVM.
-#
-
-# Mount essential filesystems (ignore errors if kernel already mounted them)
-mount -t proc proc /proc 2>/dev/null
-mount -t sysfs sysfs /sys 2>/dev/null
-mount -t devtmpfs devtmpfs /dev 2>/dev/null
-mount -t tmpfs tmpfs /tmp 2>/dev/null
-mount -t tmpfs tmpfs /run 2>/dev/null
-
-# Configure network from kernel command line
-# ip=GUEST::GATEWAY:MASK::eth0:off
-GUEST_IP=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ip=' | cut -d= -f2 | cut -d: -f1)
-GATEWAY=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ip=' | cut -d= -f2 | cut -d: -f3)
-MASK=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ip=' | cut -d= -f2 | cut -d: -f4)
-
-if [ -n "$GUEST_IP" ]; then
-    ip addr add "${GUEST_IP}/${MASK}" dev eth0 2>/dev/null
-    ip link set eth0 up 2>/dev/null
-    ip route add default via "$GATEWAY" 2>/dev/null
-fi
-
-# DNS
-echo "nameserver 8.8.8.8" > /etc/resolv.conf
-echo "nameserver 8.8.4.4" >> /etc/resolv.conf
-
-# Load environment
-if [ -f /etc/nightshift/env ]; then
-    set -a
-    . /etc/nightshift/env
-    set +a
-fi
-
-export PATH="/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
-export PYTHONPATH="/opt"
-
-# Start the agent
-cd /workspace
-exec python3 -m nightshift.agent
-INIT
+cp "$PROJECT_DIR/rootfs/init" "$MOUNT_DIR/sbin/init"
 chmod +x "$MOUNT_DIR/sbin/init"
 
 # ── Required directories ─────────────────────────────────────

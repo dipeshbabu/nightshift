@@ -43,12 +43,7 @@ async def _ensure_initialized(manifest: dict, agent_dir: str) -> None:
         return
 
     if manifest.get("has_pyproject"):
-        subprocess.run(
-            ["uv", "sync", "--project", agent_dir],
-            cwd=agent_dir,
-            check=True,
-            capture_output=True,
-        )
+        _install_agent_deps(agent_dir)
 
     if agent_dir not in sys.path:
         sys.path.insert(0, agent_dir)
@@ -56,6 +51,32 @@ async def _ensure_initialized(manifest: dict, agent_dir: str) -> None:
     mod = importlib.import_module(manifest["module"])
     _agent_fn = getattr(mod, manifest["function"])
     _initialized = True
+
+
+def _install_agent_deps(agent_dir: str) -> None:
+    """Install agent dependencies into the running Python environment.
+
+    Uses ``uv pip install`` directly instead of ``uv sync`` to avoid
+    requires-python conflicts (the agent may target a newer Python than
+    the VM provides). Dependencies are extracted from pyproject.toml and
+    installed into the current interpreter's site-packages.
+    """
+    import tomllib
+
+    pyproject_path = os.path.join(agent_dir, "pyproject.toml")
+    with open(pyproject_path, "rb") as f:
+        pyproject = tomllib.load(f)
+
+    deps = pyproject.get("project", {}).get("dependencies", [])
+    if not deps:
+        return
+
+    subprocess.run(
+        ["uv", "pip", "install", "--python", sys.executable] + deps,
+        cwd=agent_dir,
+        check=True,
+        capture_output=True,
+    )
 
 
 async def _execute_run(prompt: str, run_id: str, manifest: dict, agent_dir: str) -> None:
@@ -202,12 +223,7 @@ async def run_agent() -> None:
 
         # Install agent dependencies from pyproject.toml if present
         if manifest.get("has_pyproject"):
-            subprocess.run(
-                ["uv", "sync", "--project", agent_dir],
-                cwd=agent_dir,
-                check=True,
-                capture_output=True,
-            )
+            _install_agent_deps(agent_dir)
 
         # Add agent dir to sys.path and import the agent module
         if agent_dir not in sys.path:

@@ -21,7 +21,7 @@ class NightshiftConfig:
     @staticmethod
     def from_env() -> NightshiftConfig:
         return NightshiftConfig(
-            workspace=os.environ.get("NIGHTSHIFT_WORKSPACE", os.getcwd()),
+            workspace=os.environ.get("NIGHTSHIFT_WORKSPACE", ""),
             port=int(os.environ.get("NIGHTSHIFT_PORT", "3000")),
             kernel_path=os.environ.get("NIGHTSHIFT_KERNEL_PATH", "/opt/nightshift/vmlinux"),
             base_rootfs_path=os.environ.get(

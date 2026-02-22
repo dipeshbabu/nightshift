@@ -90,9 +90,11 @@ class VMPool:
 
                 # 2. No idle entry but under the limit → create placeholder
                 if len(entries) < effective_max:
-                    workspace = (
-                        agent.config.workspace or config.workspace or os.getcwd()
-                    )
+                    workspace = agent.config.workspace or config.workspace
+                    if not workspace:
+                        # Empty workspace: create a minimal temp dir rather than
+                        # falling back to cwd (which is "/" under systemd).
+                        workspace = tempfile.mkdtemp(prefix="nightshift-empty-ws-")
                     entry = _PoolEntry(
                         vm=None,
                         agent_id=agent_id,
@@ -203,17 +205,19 @@ class VMPool:
         """Provision a new VM from scratch."""
         workspace = entry.workspace_dest
 
-        # Package agent (no prompt — warm VMs get prompt via HTTP)
-        pkg_dir = package_agent(
+        # Package agent in a thread (synchronous file I/O)
+        pkg_dir = await asyncio.to_thread(
+            package_agent,
             module_path=agent.module_path,
             function_name=agent.name,
             prompt=None,
         )
         entry.pkg_dir = pkg_dir
 
-        # Stage workspace
+        # Stage workspace in a thread (synchronous copytree)
         staging_dir = tempfile.mkdtemp(prefix="nightshift-staging-")
-        shutil.copytree(
+        await asyncio.to_thread(
+            shutil.copytree,
             workspace,
             staging_dir,
             symlinks=True,

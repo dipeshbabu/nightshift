@@ -11,6 +11,7 @@ Flow for a /prompt request:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import tempfile
@@ -52,12 +53,16 @@ async def run_task(
     staging_dir: str | None = None
     vm: FirecrackerVM | None = None
 
-    # Workspace from agent config takes priority, then platform config, then cwd
-    workspace = agent.config.workspace or config.workspace or os.getcwd()
+    # Workspace from agent config takes priority, then platform config.
+    # Empty workspace gets a minimal temp dir (cwd would be "/" under systemd).
+    workspace = agent.config.workspace or config.workspace
+    if not workspace:
+        workspace = tempfile.mkdtemp(prefix="nightshift-empty-ws-")
 
     try:
         # Package agent source code and manifest for VM injection
-        pkg_dir = package_agent(
+        pkg_dir = await asyncio.to_thread(
+            package_agent,
             module_path=agent.module_path,
             function_name=agent.name,
             prompt=prompt,
@@ -68,7 +73,8 @@ async def run_task(
         # copied to /opt/nightshift/agent_pkg in the overlay rootfs, keeping
         # it out of /workspace so the agent only sees user content.
         staging_dir = tempfile.mkdtemp(prefix="nightshift-staging-")
-        shutil.copytree(
+        await asyncio.to_thread(
+            shutil.copytree,
             workspace,
             staging_dir,
             symlinks=True,

@@ -29,7 +29,7 @@ from nightshift.sdk.config import AgentConfig
 from nightshift.vm.network import cleanup_stale_taps
 from nightshift.vm.pool import VMPool
 
-
+logger = logging.getLogger(__name__)
 
 _registry: AgentRegistry | None = None
 _event_buffer: EventBuffer = EventBuffer()
@@ -392,6 +392,7 @@ async def _run_agent_task(
 
     Uses the warm VM pool when available, falls back to one-shot run_task.
     """
+    logger.info("Run %s: starting background task for agent %s", run_id, agent_id)
     try:
         if _vm_pool and agent_id:
             from nightshift.task import run_task_pooled
@@ -406,7 +407,9 @@ async def _run_agent_task(
 
             await run_task(prompt, run_id, agent, _event_buffer)
         await registry.complete_run(run_id)
+        logger.info("Run %s: completed successfully", run_id)
     except Exception as e:
+        logger.exception("Run %s: failed with error", run_id)
         await registry.complete_run(run_id, error=str(e))
 
 

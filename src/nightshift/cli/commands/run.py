@@ -23,13 +23,15 @@ def run(agent_name: str, prompt: str, follow: bool) -> None:
     url = get_url()
     headers = get_auth_headers()
 
-    # Forward ANTHROPIC_API_KEY from the local environment into the VM
+    # Forward API keys from the local environment into the VM.
+    # These are injected as per-run env vars so the agent inside the VM
+    # can use them without the server needing to hold every key.
+    _FORWARD_KEYS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
     runtime_env: dict[str, str] = {}
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if api_key:
-        runtime_env["ANTHROPIC_API_KEY"] = api_key
-    else:
-        click.echo("Warning: ANTHROPIC_API_KEY not set in local environment", err=True)
+    for key in _FORWARD_KEYS:
+        val = os.environ.get(key)
+        if val:
+            runtime_env[key] = val
 
     try:
         r = httpx.post(

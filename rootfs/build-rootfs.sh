@@ -83,9 +83,10 @@ chroot "$MOUNT_DIR" /bin/sh -c '
 '
 
 
-echo "==> Installing claude-agent-sdk..."
+echo "==> Installing claude CLI and agent SDK..."
 chroot "$MOUNT_DIR" /bin/sh -c '
     export PATH="/root/.local/bin:$PATH"
+    npm install -g @anthropic-ai/claude-code
     uv pip install --system --break-system-packages claude-agent-sdk
 '
 
