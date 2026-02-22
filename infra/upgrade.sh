@@ -68,23 +68,24 @@ echo ""
 # 1. Download new rootfs from GitHub Release
 # -------------------------------------------------------------------
 echo "==> Downloading rootfs.ext4.gz from GitHub Release $VERSION..."
-ssh $SSH_OPTS "$TARGET" "sudo curl -L -o /opt/nightshift/rootfs.ext4.gz \
+ssh $SSH_OPTS "$TARGET" "curl -sSL -o /tmp/rootfs.ext4.gz \
     'https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/rootfs.ext4.gz' \
-    && sudo gunzip -f /opt/nightshift/rootfs.ext4.gz"
+    && sudo -n mv /tmp/rootfs.ext4.gz /opt/nightshift/rootfs.ext4.gz \
+    && sudo -n gunzip -f /opt/nightshift/rootfs.ext4.gz"
 echo "    Done"
 
 # -------------------------------------------------------------------
 # 2. Upgrade nightshift-sdk via uvx
 # -------------------------------------------------------------------
 echo "==> Upgrading nightshift-sdk to $SDK_VERSION..."
-ssh $SSH_OPTS "$TARGET" "sudo /root/.local/bin/uvx --upgrade --from 'nightshift-sdk==${SDK_VERSION}' nightshift --version"
+ssh $SSH_OPTS "$TARGET" "export PATH=/home/ubuntu/.local/bin:/root/.local/bin:\$PATH; uv tool install --upgrade 'nightshift-sdk==${SDK_VERSION}'"
 echo "    Done"
 
 # -------------------------------------------------------------------
 # 3. Restart service
 # -------------------------------------------------------------------
 echo "==> Restarting nightshift-serve..."
-ssh $SSH_OPTS "$TARGET" "sudo systemctl restart nightshift-serve"
+ssh $SSH_OPTS "$TARGET" "sudo -n systemctl restart nightshift-serve"
 
 # -------------------------------------------------------------------
 # 4. Verify

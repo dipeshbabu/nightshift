@@ -38,6 +38,7 @@ fi
 export PATH="/root/.local/bin:$PATH"
 export PYTHONPATH="/opt"
 
-# Start the agent
+# Start the agent using the .venv Python so dependencies (fastapi, etc.)
+# installed by `uv sync` during rootfs build are available.
 cd /workspace
-exec python3 -m nightshift.agent 2>&1 | tee /var/log/nightshift-agent.log
+exec /opt/nightshift/.venv/bin/python3 -m nightshift.agent 2>&1 | tee /var/log/nightshift-agent.log

@@ -30,9 +30,7 @@ PORT=3000
 VERSION=""
 GITHUB_REPO="nightshiftco/nightshift"
 
-# -------------------------------------------------------------------
 # Parse arguments
-# -------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case $1 in
         --hostname) HOSTNAME="$2"; shift 2 ;;
@@ -76,9 +74,7 @@ echo "    Region:   $REGION"
 echo "    Port:     $PORT"
 echo ""
 
-# -------------------------------------------------------------------
-# 1. SSH key pair
-# -------------------------------------------------------------------
+# SSH key pair
 if ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" --region "$REGION" &>/dev/null; then
     echo "==> Creating key pair: $KEY_NAME"
     aws ec2 create-key-pair \
@@ -99,9 +95,7 @@ else
     fi
 fi
 
-# -------------------------------------------------------------------
-# 2. Security group — SSH + HTTP + HTTPS
-# -------------------------------------------------------------------
+# Security group 
 SG_ID=$(aws ec2 describe-security-groups \
     --filters "Name=group-name,Values=$SG_NAME" \
     --region "$REGION" \
@@ -112,7 +106,7 @@ if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
     echo "==> Creating security group: $SG_NAME"
     SG_ID=$(aws ec2 create-security-group \
         --group-name "$SG_NAME" \
-        --description "Nightshift production — SSH + HTTP + HTTPS" \
+        --description "Nightshift production - SSH, HTTP, HTTPS" \
         --region "$REGION" \
         --query 'GroupId' \
         --output text)
@@ -149,9 +143,7 @@ aws ec2 authorize-security-group-ingress \
     --region "$REGION" &>/dev/null || true
 echo "    Security group: $SG_ID (SSH: ${MY_IP}/32, HTTP/HTTPS: 0.0.0.0/0)"
 
-# -------------------------------------------------------------------
-# 3. Find latest Ubuntu 22.04 AMI
-# -------------------------------------------------------------------
+# Find latest Ubuntu 22.04 AMI
 AMI_ID=$(aws ec2 describe-images \
     --owners 099720109477 \
     --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
@@ -161,9 +153,7 @@ AMI_ID=$(aws ec2 describe-images \
     --output text)
 echo "==> AMI: $AMI_ID (Ubuntu 22.04 latest)"
 
-# -------------------------------------------------------------------
-# 4. Build user-data bootstrap script
-# -------------------------------------------------------------------
+# Build user-data bootstrap script
 # Variable substitution: VERSION, PORT, API_KEY, HOSTNAME, GITHUB_REPO
 # are injected into the heredoc. The rest of the script runs as root on
 # first boot.
@@ -176,7 +166,11 @@ exec > >(tee /var/log/nightshift-setup.log) 2>&1
 # ── System packages ──────────────────────────────────────────────────
 apt-get update
 apt-get upgrade -y
-apt-get install -y curl wget jq acl iptables iproute2 rsync
+apt-get install -y curl wget jq acl iptables iproute2 rsync nodejs npm
+
+# We install claude code for convenience on the server
+echo "==> Installing claude CLI..."
+npm install -g @anthropic-ai/claude-code
 
 # ── KVM access ───────────────────────────────────────────────────────
 modprobe kvm
@@ -220,7 +214,7 @@ gunzip rootfs.ext4.gz
 # uvx installs and runs CLI tools from PyPI in isolated environments.
 # Pin to the release version so operator knows exactly what's running.
 SDK_VERSION=\$(echo "${VERSION}" | sed 's/^v//')
-uvx --from "nightshift-sdk==\${SDK_VERSION}" nightshift --version
+uvx --from "nightshift-sdk==\${SDK_VERSION}" nightshift --help
 
 # ── Caddy (auto-TLS reverse proxy) ──────────────────────────────────
 apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
@@ -266,9 +260,7 @@ echo "setup_complete \$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /opt/nightshift/.setup-d
 USERDATA_EOF
 )
 
-# -------------------------------------------------------------------
-# 5. Launch instance
-# -------------------------------------------------------------------
+# Launch instance
 echo "==> Launching $INSTANCE_TYPE instance..."
 INSTANCE_ID=$(aws ec2 run-instances \
     --image-id "$AMI_ID" \
@@ -286,9 +278,7 @@ echo "    Instance ID: $INSTANCE_ID"
 echo "==> Waiting for instance to enter 'running' state..."
 aws ec2 wait instance-running --instance-ids "$INSTANCE_ID" --region "$REGION"
 
-# -------------------------------------------------------------------
-# 6. Allocate and associate Elastic IP
-# -------------------------------------------------------------------
+# Allocate and associate Elastic IP
 echo "==> Allocating Elastic IP..."
 ALLOC_ID=$(aws ec2 allocate-address \
     --domain vpc \
@@ -310,9 +300,7 @@ aws ec2 associate-address \
     --output text > /dev/null
 echo "    Elastic IP: $ELASTIC_IP"
 
-# -------------------------------------------------------------------
-# 7. Save state
-# -------------------------------------------------------------------
+# state
 cat > "$STATE_FILE" << EOF
 INSTANCE_ID=$INSTANCE_ID
 ELASTIC_IP=$ELASTIC_IP
@@ -324,9 +312,7 @@ VERSION=$VERSION
 EOF
 echo "    State saved to $STATE_FILE"
 
-# -------------------------------------------------------------------
-# 8. Wait for SSH
-# -------------------------------------------------------------------
+# Wait for SSH
 echo "==> Waiting for SSH..."
 for i in $(seq 1 60); do
     if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes \
@@ -341,9 +327,7 @@ for i in $(seq 1 60); do
     sleep 10
 done
 
-# -------------------------------------------------------------------
-# 9. Wait for user-data setup to complete
-# -------------------------------------------------------------------
+# Wait for user-data setup to complete
 echo "==> Waiting for instance setup to complete..."
 echo "    (installing firecracker, kernel, rootfs, nightshift, caddy)"
 for i in $(seq 1 90); do
@@ -361,9 +345,7 @@ for i in $(seq 1 90); do
     sleep 10
 done
 
-# -------------------------------------------------------------------
-# 10. Print connection info
-# -------------------------------------------------------------------
+# Print connection info
 echo ""
 echo "=== Nightshift deployment complete ==="
 echo ""

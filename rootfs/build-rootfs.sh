@@ -75,15 +75,13 @@ chroot "$MOUNT_DIR" /bin/sh -c '
     # Install Python 3.12 via uv
     uv python install 3.12
 
-    # Create symlinks
+    # Create symlinks so python3/uv/uvx are on the default PATH
+    PYTHON_BIN=$(find /root/.local/share/uv/python -name "python3.12" -type f | head -1)
+    ln -sf "$PYTHON_BIN" /usr/local/bin/python3
     ln -sf /root/.local/bin/uv /usr/local/bin/uv
     ln -sf /root/.local/bin/uvx /usr/local/bin/uvx
 '
 
-echo "==> Installing claude CLI..."
-chroot "$MOUNT_DIR" /bin/sh -c '
-    npm install -g @anthropic-ai/claude-code
-'
 
 echo "==> Installing claude-agent-sdk..."
 chroot "$MOUNT_DIR" /bin/sh -c '
