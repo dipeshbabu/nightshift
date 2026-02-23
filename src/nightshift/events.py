@@ -123,7 +123,7 @@ class EventBuffer:
         async for event_type, payload in self.stream(run_id):
             yield {
                 "event": event_type,
-                "data": json.dumps({"type": event_type, **payload}),
+                "data": json.dumps({"type": event_type, **payload}, default=str),
             }
             if event_type in TERMINAL_EVENTS:
                 return

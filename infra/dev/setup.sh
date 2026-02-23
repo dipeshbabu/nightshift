@@ -51,6 +51,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Strip protocol prefix if provided (e.g. https://example.com -> example.com)
+PROD_HOSTNAME="${PROD_HOSTNAME#https://}"
+PROD_HOSTNAME="${PROD_HOSTNAME#http://}"
+
 if [ "$PRODUCTION" = true ] && [ -z "$PROD_HOSTNAME" ]; then
     echo "Error: --production requires --hostname"
     echo "Usage: $0 --production --hostname <FQDN> [--port <port>]"

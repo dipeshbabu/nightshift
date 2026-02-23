@@ -111,6 +111,12 @@ async def run_task(
         await log.publish(run_id, CompletedEvent())
 
     except Exception as e:
+        if vm:
+            serial = vm.get_serial_log()
+            logger.warning(
+                "Run %s failed: %s\n--- serial log ---\n%s\n--- end serial log ---",
+                run_id, e, serial or "(empty)",
+            )
         await log.publish(run_id, ErrorEvent(error=str(e)))
 
     finally:
@@ -156,9 +162,13 @@ async def run_task_pooled(
                 logger.info("Run %s: checkin complete", run_id)
                 return
             except Exception as exc:
+                # Give the serial reader time to drain the full traceback
+                await asyncio.sleep(2)
+                serial = vm.get_serial_log()
                 logger.warning(
-                    "Run %s failed on VM %s (attempt %d), invalidating: %s",
-                    run_id, vm.vm_id, attempt + 1, exc,
+                    "Run %s failed on VM %s (attempt %d): %s\n"
+                    "--- serial log ---\n%s\n--- end serial log ---",
+                    run_id, vm.vm_id, attempt + 1, exc, serial or "(empty)",
                 )
                 await pool.invalidate_vm(agent_id, vm)
                 if attempt == 0:

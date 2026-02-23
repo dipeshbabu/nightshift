@@ -46,6 +46,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Strip protocol prefix if provided (e.g. https://example.com -> example.com)
+HOSTNAME="${HOSTNAME#https://}"
+HOSTNAME="${HOSTNAME#http://}"
+
 if [ -z "$HOSTNAME" ]; then
     echo "Error: --hostname is required"
     echo "Usage: $0 --hostname <FQDN> --api-key <key> [--region <region>] [--version <tag>] [--port <port>]"
