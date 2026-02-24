@@ -440,6 +440,7 @@ def _build_registered_agent(
     """
     config_data = json.loads(agent.config_json)
     env = config_data.get("env", {})
+    env.update(config_data.get("secrets", {}))
 
     # For non-pooled (legacy) runs, merge runtime_env into static env.
     # For pooled runs, the caller passes runtime_env separately.
@@ -447,8 +448,9 @@ def _build_registered_agent(
         env.update(runtime_env)
 
     workspace = config_data.get("workspace", "")
-    if workspace == "__uploaded__":
+    if workspace == "__uploaded__" or (config_data.get("stateful", False) and not workspace):
         workspace = os.path.join(agent.storage_path, "__workspace__")
+        os.makedirs(workspace, exist_ok=True)
 
     agent_config = AgentConfig(
         workspace=workspace,
