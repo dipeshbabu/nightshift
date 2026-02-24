@@ -14,10 +14,11 @@ import tarfile
 import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from nightshift.auth import bootstrap_api_key, generate_api_key, get_tenant_id, hash_api_key
@@ -57,6 +58,31 @@ async def _auth_dependency(request: Request) -> str:
         raise HTTPException(status_code=401, detail="Invalid API key")
     return tenant_id
 
+
+def _base_url(request: Request) -> str:
+    """Derive the public base URL from the incoming request.
+
+    Behind a reverse proxy with ``--proxy-headers``, ``request.base_url``
+    already reflects ``X-Forwarded-Host`` / ``X-Forwarded-Proto``.
+    """
+    return str(request.base_url).rstrip("/")
+
+
+def _agent_response(agent: AgentRecord, base: str) -> dict[str, Any]:
+    """Build the JSON-serialisable dict for an agent, including URLs."""
+    config = json.loads(agent.config_json)
+    stateful = config.get("stateful", False)
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "source_filename": agent.source_filename,
+        "function_name": agent.function_name,
+        "stateful": stateful,
+        "invoke_url": f"{base}/api/agents/{agent.name}/runs",
+        "workspace_url": f"{base}/api/agents/{agent.name}/workspace" if stateful else None,
+        "created_at": agent.created_at,
+        "updated_at": agent.updated_at,
+    }
 
 
 @asynccontextmanager
@@ -259,20 +285,40 @@ async def deploy_agent(
 # ── List agents ───────────────────────────────────────────────
 
 @app.get("/api/agents")
-async def list_agents(tenant_id: str = Depends(_auth_dependency)):
+async def list_agents(request: Request, tenant_id: str = Depends(_auth_dependency)):
     registry = _get_registry()
     agents = await registry.list_agents(tenant_id)
-    return [
-        {
-            "id": a.id,
-            "name": a.name,
-            "source_filename": a.source_filename,
-            "function_name": a.function_name,
-            "created_at": a.created_at,
-            "updated_at": a.updated_at,
-        }
-        for a in agents
-    ]
+    base = _base_url(request)
+    return [_agent_response(a, base) for a in agents]
+
+
+# ── Agent detail ──────────────────────────────────────────────
+
+@app.get("/api/agents/{name}")
+async def get_agent(
+    name: str,
+    request: Request,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """Return details for a single agent including invoke/workspace URLs."""
+    registry = _get_registry()
+    agent = await registry.get_agent(tenant_id, name)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
+
+    base = _base_url(request)
+    config = json.loads(agent.config_json)
+    stateful = config.get("stateful", False)
+
+    return {
+        **_agent_response(agent, base),
+        "config": {
+            "vcpu_count": config.get("vcpu_count", 2),
+            "mem_size_mib": config.get("mem_size_mib", 2048),
+            "timeout_seconds": config.get("timeout_seconds", 1800),
+            "stateful": stateful,
+        },
+    }
 
 
 # ── Delete agent ──────────────────────────────────────────────
@@ -297,6 +343,87 @@ async def delete_agent(
 
     await registry.delete_agent(tenant_id, name)
     return {"status": "deleted", "name": name}
+
+
+# ── Workspace ─────────────────────────────────────────────────
+
+def _workspace_dir(agent: AgentRecord) -> str:
+    """Return the workspace directory for a stateful agent."""
+    return os.path.join(agent.storage_path, "__workspace__")
+
+
+@app.get("/api/agents/{name}/workspace")
+async def list_workspace(
+    name: str,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """List files in a stateful agent's workspace."""
+    registry = _get_registry()
+    agent = await registry.get_agent(tenant_id, name)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
+
+    config = json.loads(agent.config_json)
+    if not config.get("stateful", False):
+        raise HTTPException(status_code=400, detail="Agent is not stateful")
+
+    ws_dir = _workspace_dir(agent)
+    if not os.path.isdir(ws_dir):
+        return {"files": []}
+
+    files: list[dict[str, Any]] = []
+    for dirpath, dirnames, filenames in os.walk(ws_dir):
+        rel_dir = os.path.relpath(dirpath, ws_dir)
+        # Include directories (except the root itself)
+        if rel_dir != ".":
+            st = os.stat(dirpath)
+            files.append({
+                "path": rel_dir,
+                "type": "directory",
+                "size": 0,
+                "modified_at": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+            })
+        for fname in filenames:
+            full = os.path.join(dirpath, fname)
+            rel = os.path.relpath(full, ws_dir)
+            st = os.stat(full)
+            files.append({
+                "path": rel,
+                "type": "file",
+                "size": st.st_size,
+                "modified_at": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+            })
+
+    return {"files": files}
+
+
+@app.get("/api/agents/{name}/workspace/{file_path:path}")
+async def download_workspace_file(
+    name: str,
+    file_path: str,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """Download a file from a stateful agent's workspace."""
+    registry = _get_registry()
+    agent = await registry.get_agent(tenant_id, name)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
+
+    config = json.loads(agent.config_json)
+    if not config.get("stateful", False):
+        raise HTTPException(status_code=400, detail="Agent is not stateful")
+
+    ws_dir = os.path.realpath(_workspace_dir(agent))
+    resolved = os.path.realpath(os.path.join(ws_dir, file_path))
+
+    # Path traversal prevention
+    if not resolved.startswith(ws_dir + os.sep) and resolved != ws_dir:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(resolved)
 
 
 # ── Run agent ─────────────────────────────────────────────────
