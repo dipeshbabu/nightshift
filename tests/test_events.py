@@ -98,13 +98,14 @@ async def test_event_buffer_isolation_between_runs():
 
 @pytest.mark.asyncio
 async def test_event_buffer_cleanup():
-    """cleanup() removes the run's events."""
+    """cleanup() marks the run as done but keeps events until reaped."""
     buf = EventBuffer()
     await buf.publish("run-1", StartedEvent(workspace="/test"))
     await buf.publish("run-1", CompletedEvent())
 
     await buf.cleanup("run-1")
-    assert "run-1" not in buf._runs
+    assert "run-1" in buf._done
+    assert "run-1" in buf._runs  # events still in memory
 
 
 @pytest.mark.asyncio
@@ -147,3 +148,49 @@ async def test_event_buffer_stream_terminates_on_cleanup():
     await asyncio.wait_for(task, timeout=2.0)
     assert len(collected) == 1
     assert collected[0][0] == "nightshift.started"
+
+
+@pytest.mark.asyncio
+async def test_event_buffer_persist_callback():
+    """persist callback is called for each event appended."""
+    calls = []
+
+    async def fake_persist(run_id, event_type, payload):
+        calls.append((run_id, event_type, payload))
+
+    buf = EventBuffer(persist=fake_persist)
+    await buf.append("run-1", "nightshift.started", {"workspace": "/a"})
+    await buf.append("run-1", "agent.message", {"text": "hi"})
+
+    assert len(calls) == 2
+    assert calls[0] == ("run-1", "nightshift.started", {"workspace": "/a"})
+    assert calls[1] == ("run-1", "agent.message", {"text": "hi"})
+
+
+@pytest.mark.asyncio
+async def test_event_buffer_has_run():
+    """has_run() reflects in-memory state."""
+    buf = EventBuffer()
+    assert buf.has_run("run-1") is False
+
+    await buf.append("run-1", "nightshift.started", {})
+    assert buf.has_run("run-1") is True
+
+    buf.reap("run-1")
+    assert buf.has_run("run-1") is False
+
+
+@pytest.mark.asyncio
+async def test_event_buffer_no_persist_by_default():
+    """EventBuffer works fine without a persist callback."""
+    buf = EventBuffer()
+    await buf.append("run-1", "nightshift.started", {})
+    await buf.append("run-1", "nightshift.completed", {})
+
+    events = []
+    async for event_type, payload in buf.stream("run-1"):
+        events.append(event_type)
+        if len(events) == 2:
+            break
+
+    assert events == ["nightshift.started", "nightshift.completed"]

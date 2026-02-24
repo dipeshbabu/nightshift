@@ -168,3 +168,50 @@ async def test_api_key_idempotent(registry):
 
     tenant = await registry.get_tenant_by_key_hash("hash123")
     assert tenant == "tenant_a"
+
+
+# ── Run Events ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_save_and_get_run_events(registry):
+    await registry.save_event("run-1", "nightshift.started", {"workspace": "/a"})
+    await registry.save_event("run-1", "nightshift.completed", {})
+
+    events = await registry.get_run_events("run-1")
+    assert len(events) == 2
+    assert events[0] == ("nightshift.started", {"workspace": "/a"})
+    assert events[1] == ("nightshift.completed", {})
+
+
+@pytest.mark.asyncio
+async def test_get_run_events_empty(registry):
+    events = await registry.get_run_events("nonexistent-run")
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_run_events_ordering(registry):
+    for i in range(5):
+        await registry.save_event("run-1", f"event.{i}", {"index": i})
+
+    events = await registry.get_run_events("run-1")
+    assert len(events) == 5
+    for i, (event_type, payload) in enumerate(events):
+        assert event_type == f"event.{i}"
+        assert payload["index"] == i
+
+
+@pytest.mark.asyncio
+async def test_run_events_isolation(registry):
+    await registry.save_event("run-a", "nightshift.started", {"workspace": "/a"})
+    await registry.save_event("run-b", "nightshift.started", {"workspace": "/b"})
+    await registry.save_event("run-a", "nightshift.completed", {})
+
+    events_a = await registry.get_run_events("run-a")
+    events_b = await registry.get_run_events("run-b")
+
+    assert len(events_a) == 2
+    assert len(events_b) == 1
+    assert events_a[0][1]["workspace"] == "/a"
+    assert events_b[0][1]["workspace"] == "/b"

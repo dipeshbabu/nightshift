@@ -11,7 +11,7 @@ import json
 import logging
 import time
 from dataclasses import asdict, dataclass, field
-from typing import AsyncIterator, Literal, Union
+from typing import AsyncIterator, Awaitable, Callable, Literal, Union
 
 logger = logging.getLogger(__name__)
 
@@ -62,14 +62,17 @@ class EventBuffer:
     (replay + live-tail) via an asyncio.Condition.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, persist: Callable[[str, str, dict], Awaitable[None]] | None = None) -> None:
         self._runs: dict[str, list[tuple[str, dict]]] = {}
         self._cond: asyncio.Condition = asyncio.Condition()
         self._done: set[str] = set()
+        self._persist = persist
 
     async def append(self, run_id: str, event_type: str, payload: dict) -> None:
         """Append an event to a run's buffer and notify waiters."""
         self._runs.setdefault(run_id, []).append((event_type, payload))
+        if self._persist is not None:
+            await self._persist(run_id, event_type, payload)
         async with self._cond:
             self._cond.notify_all()
 
@@ -103,6 +106,10 @@ class EventBuffer:
         """Free memory for a finished run. Call after consumers have disconnected."""
         self._runs.pop(run_id, None)
         self._done.discard(run_id)
+
+    def has_run(self, run_id: str) -> bool:
+        """Check whether a run is currently held in the in-memory buffer."""
+        return run_id in self._runs
 
     # ── Convenience methods (used by task.py, vm/manager.py, agent/entry.py) ──
 

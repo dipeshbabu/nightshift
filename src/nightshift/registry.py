@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -86,6 +87,15 @@ class AgentRegistry:
                 label TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS run_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON run_events(run_id);
             """
         )
         await self._db.commit()
@@ -246,6 +256,22 @@ class AgentRegistry:
             id=r[0], agent_id=r[1], tenant_id=r[2], prompt=r[3],
             status=r[4], created_at=r[5], completed_at=r[6], error=r[7],
         )
+
+    # ── Run Events ────────────────────────────────────────────────
+
+    async def save_event(self, run_id: str, event_type: str, payload: dict) -> None:
+        await self.db.execute(
+            "INSERT INTO run_events (run_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+            (run_id, event_type, json.dumps(payload, default=str), time.time()),
+        )
+        await self.db.commit()
+
+    async def get_run_events(self, run_id: str) -> list[tuple[str, dict]]:
+        rows = await self.db.execute_fetchall(
+            "SELECT event_type, payload_json FROM run_events WHERE run_id = ? ORDER BY id",
+            (run_id,),
+        )
+        return [(row[0], json.loads(row[1])) for row in rows]
 
     # ── API Keys ──────────────────────────────────────────────────
 

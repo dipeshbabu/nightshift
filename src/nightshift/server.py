@@ -87,7 +87,7 @@ def _agent_response(agent: AgentRecord, base: str) -> dict[str, Any]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _registry, _config, _vm_pool
+    global _registry, _config, _vm_pool, _event_buffer
 
     logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
 
@@ -98,6 +98,7 @@ async def lifespan(app: FastAPI):
 
     _registry = AgentRegistry(_config.db_path)
     await _registry.init_db()
+    _event_buffer = EventBuffer(persist=_registry.save_event)
     await bootstrap_api_key(_registry)
 
     await cleanup_stale_taps()
@@ -540,6 +541,9 @@ async def _run_agent_task(
     except Exception as e:
         logger.exception("Run %s: failed with error", run_id)
         await registry.complete_run(run_id, error=str(e))
+    # Give SSE clients time to drain, then free memory
+    await asyncio.sleep(5)
+    _event_buffer.reap(run_id)
 
 
 # ── Stream events ─────────────────────────────────────────────
@@ -557,12 +561,23 @@ async def stream_events(
     if run.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    async def _stream_and_reap():
-        async for event in _event_buffer.stream_sse(run_id):
-            yield event
-        _event_buffer.reap(run_id)
+    if _event_buffer.has_run(run_id):
+        async def _stream_live():
+            async for event in _event_buffer.stream_sse(run_id):
+                yield event
 
-    return EventSourceResponse(_stream_and_reap())
+        return EventSourceResponse(_stream_live())
+
+    # Run already reaped from memory — replay from DB
+    async def _stream_from_db():
+        events = await registry.get_run_events(run_id)
+        for event_type, payload in events:
+            yield {
+                "event": event_type,
+                "data": json.dumps({"type": event_type, **payload}, default=str),
+            }
+
+    return EventSourceResponse(_stream_from_db())
 
 
 # ── Server entry point ────────────────────────────────────────
