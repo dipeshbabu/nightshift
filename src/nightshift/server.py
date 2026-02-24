@@ -427,6 +427,38 @@ async def download_workspace_file(
     return FileResponse(resolved)
 
 
+@app.put("/api/agents/{name}/workspace/{file_path:path}")
+async def upload_workspace_file(
+    name: str,
+    file_path: str,
+    request: Request,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """Upload a file to a stateful agent's workspace."""
+    registry = _get_registry()
+    agent = await registry.get_agent(tenant_id, name)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
+
+    config = json.loads(agent.config_json)
+    if not config.get("stateful", False):
+        raise HTTPException(status_code=400, detail="Agent is not stateful")
+
+    ws_dir = os.path.realpath(_workspace_dir(agent))
+    resolved = os.path.realpath(os.path.join(ws_dir, file_path))
+
+    if not resolved.startswith(ws_dir + os.sep) and resolved != ws_dir:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    os.makedirs(os.path.dirname(resolved), exist_ok=True)
+
+    body = await request.body()
+    with open(resolved, "wb") as f:
+        f.write(body)
+
+    return JSONResponse({"path": file_path, "size": len(body)}, status_code=201)
+
+
 # ── Run agent ─────────────────────────────────────────────────
 
 def _build_registered_agent(
