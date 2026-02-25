@@ -372,8 +372,10 @@ async def list_workspace(
     if not os.path.isdir(ws_dir):
         return {"files": []}
 
+    skip = {".git", "__pycache__", ".venv", "node_modules", ".ruff_cache"}
     files: list[dict[str, Any]] = []
     for dirpath, dirnames, filenames in os.walk(ws_dir):
+        dirnames[:] = [d for d in dirnames if d not in skip]
         rel_dir = os.path.relpath(dirpath, ws_dir)
         # Include directories (except the root itself)
         if rel_dir != ".":
