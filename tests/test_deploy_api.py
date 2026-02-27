@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from nightshift.auth import hash_api_key
 from nightshift.registry import AgentRegistry
-from nightshift.server import app, _auth_dependency, _build_registered_agent
+from nightshift.server import app, _auth_dependency, _build_registered_agent, _run_tasks
 import nightshift.server as srv
 
 
@@ -621,3 +621,71 @@ async def test_upload_workspace_file_appears_in_listing(setup_server):
         assert r.status_code == 200
         paths = [f["path"] for f in r.json()["files"]]
         assert "listed.txt" in paths
+
+
+# ── Run status & interrupt tests ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_run_status(setup_server):
+    """GET /api/runs/{id} returns run details."""
+    registry = setup_server
+    agent = await registry.upsert_agent(
+        tenant_id=TEST_TENANT, name="status_agent",
+        source_filename="agent.py", function_name="status_agent",
+        config_json="{}", storage_path="/tmp/agents/s",
+    )
+    run = await registry.create_run(agent.id, TEST_TENANT, "hello")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.get(f"/api/runs/{run.id}", headers=_auth_headers())
+        assert r.status_code == 200
+        data = r.json()
+        assert data["id"] == run.id
+        assert data["status"] == "queued"
+        assert data["created_at"] is not None
+        assert data["completed_at"] is None
+        assert data["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_run_status_not_found(setup_server):
+    """GET /api/runs/{id} returns 404 for unknown run."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.get("/api/runs/nonexistent-id", headers=_auth_headers())
+        assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_interrupt_completed_run_is_idempotent(setup_server):
+    """POST /api/runs/{id}/interrupt on a finished run returns current status."""
+    registry = setup_server
+    agent = await registry.upsert_agent(
+        tenant_id=TEST_TENANT, name="done_agent",
+        source_filename="agent.py", function_name="done_agent",
+        config_json="{}", storage_path="/tmp/agents/d",
+    )
+    run = await registry.create_run(agent.id, TEST_TENANT, "hello")
+    await registry.complete_run(run.id)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post(f"/api/runs/{run.id}/interrupt", headers=_auth_headers())
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_interrupt_run_not_found(setup_server):
+    """POST /api/runs/{id}/interrupt returns 404 for unknown run."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/api/runs/nonexistent-id/interrupt", headers=_auth_headers())
+        assert r.status_code == 404

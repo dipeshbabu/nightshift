@@ -75,7 +75,7 @@ class AgentRegistry:
                 agent_id TEXT NOT NULL,
                 tenant_id TEXT NOT NULL,
                 prompt TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'started',
+                status TEXT NOT NULL DEFAULT 'queued',
                 created_at TEXT NOT NULL,
                 completed_at TEXT,
                 error TEXT
@@ -97,6 +97,10 @@ class AgentRegistry:
             );
             CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON run_events(run_id);
             """
+        )
+        # Migrate legacy 'started' status to 'running'
+        await self._db.execute(
+            "UPDATE runs SET status = 'running' WHERE status = 'started'"
         )
         await self._db.commit()
 
@@ -218,13 +222,14 @@ class AgentRegistry:
         agent_id: str,
         tenant_id: str,
         prompt: str,
+        status: str = "queued",
     ) -> RunRecord:
         run_id = _uuid()
         now = _now()
         await self.db.execute(
             """INSERT INTO runs (id, agent_id, tenant_id, prompt, status, created_at)
-               VALUES (?, ?, ?, ?, 'started', ?)""",
-            (run_id, agent_id, tenant_id, prompt, now),
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (run_id, agent_id, tenant_id, prompt, status, now),
         )
         await self.db.commit()
         return RunRecord(
@@ -232,9 +237,17 @@ class AgentRegistry:
             agent_id=agent_id,
             tenant_id=tenant_id,
             prompt=prompt,
-            status="started",
+            status=status,
             created_at=now,
         )
+
+    async def update_run_status(self, run_id: str, status: str) -> None:
+        """Update the status of a run (e.g. queued→running, →interrupted)."""
+        await self.db.execute(
+            "UPDATE runs SET status = ? WHERE id = ?",
+            (status, run_id),
+        )
+        await self.db.commit()
 
     async def complete_run(self, run_id: str, error: str | None = None) -> None:
         now = _now()

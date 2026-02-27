@@ -112,7 +112,7 @@ async def test_create_and_get_run(registry):
         config_json="{}", storage_path="/opt/agents/r",
     )
     run = await registry.create_run(agent.id, "t1", "Hello world")
-    assert run.status == "started"
+    assert run.status == "queued"
     assert run.prompt == "Hello world"
 
     fetched = await registry.get_run(run.id)
@@ -215,3 +215,36 @@ async def test_run_events_isolation(registry):
     assert len(events_b) == 1
     assert events_a[0][1]["workspace"] == "/a"
     assert events_b[0][1]["workspace"] == "/b"
+
+
+@pytest.mark.asyncio
+async def test_create_run_with_custom_status(registry):
+    agent = await registry.upsert_agent(
+        tenant_id="t1", name="runner",
+        source_filename="r.py", function_name="runner",
+        config_json="{}", storage_path="/opt/agents/r",
+    )
+    run = await registry.create_run(agent.id, "t1", "Hello", status="running")
+    assert run.status == "running"
+
+    fetched = await registry.get_run(run.id)
+    assert fetched.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_update_run_status(registry):
+    agent = await registry.upsert_agent(
+        tenant_id="t1", name="runner",
+        source_filename="r.py", function_name="runner",
+        config_json="{}", storage_path="/opt/agents/r",
+    )
+    run = await registry.create_run(agent.id, "t1", "Hello")
+    assert run.status == "queued"
+
+    await registry.update_run_status(run.id, "running")
+    fetched = await registry.get_run(run.id)
+    assert fetched.status == "running"
+
+    await registry.update_run_status(run.id, "interrupted")
+    fetched = await registry.get_run(run.id)
+    assert fetched.status == "interrupted"

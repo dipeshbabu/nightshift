@@ -129,8 +129,9 @@ class VMPool:
             vm = await self._cold_start(entry, agent, config)
             entry.vm = vm
             return vm
-        except Exception:
-            # Clean up the placeholder on failure
+        except BaseException:
+            # Clean up the placeholder on failure (including CancelledError,
+            # which inherits from BaseException, not Exception, in Python 3.9+).
             async with self._cond:
                 entries = self._agents.get(agent_id, [])
                 if entry in entries:

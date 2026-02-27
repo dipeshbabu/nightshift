@@ -23,7 +23,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from nightshift.auth import bootstrap_api_key, generate_api_key, get_tenant_id, hash_api_key
 from nightshift.config import NightshiftConfig
-from nightshift.events import EventBuffer, StartedEvent
+from nightshift.events import EventBuffer, InterruptedEvent, StartedEvent
 from nightshift.registry import AgentRecord, AgentRegistry
 from nightshift.sdk.app import RegisteredAgent
 from nightshift.sdk.config import AgentConfig
@@ -36,6 +36,7 @@ _registry: AgentRegistry | None = None
 _event_buffer: EventBuffer = EventBuffer()
 _config: NightshiftConfig = NightshiftConfig()
 _vm_pool: VMPool | None = None
+_run_tasks: dict[str, asyncio.Task] = {}  # run_id → background task
 
 
 def _get_registry() -> AgentRegistry:
@@ -528,20 +529,20 @@ async def create_run(
     if not agent_record:
         raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
 
-    run = await registry.create_run(agent_record.id, tenant_id, prompt)
+    run = await registry.create_run(agent_record.id, tenant_id, prompt, status="queued")
 
-    await _event_buffer.publish(run.id, StartedEvent(workspace=agent_record.storage_path))
-
-    # Launch task in background
+    # Launch task in background — StartedEvent is deferred until a VM is acquired
     registered = _build_registered_agent(agent_record, runtime_env=runtime_env)
-    asyncio.create_task(
+    task = asyncio.create_task(
         _run_agent_task(
             run.id, prompt, registered, registry,
             agent_id=agent_record.id, runtime_env=runtime_env,
+            workspace_path=agent_record.storage_path,
         )
     )
+    _run_tasks[run.id] = task
 
-    return JSONResponse({"id": run.id, "status": "started"}, status_code=202)
+    return JSONResponse({"id": run.id, "status": "queued"}, status_code=202)
 
 
 async def _run_agent_task(
@@ -551,12 +552,19 @@ async def _run_agent_task(
     registry: AgentRegistry,
     agent_id: str = "",
     runtime_env: dict[str, str] | None = None,
+    workspace_path: str = "",
 ) -> None:
     """Background task that runs an agent in a Firecracker VM.
 
     Uses the warm VM pool when available, falls back to one-shot run_task.
     """
     logger.info("Run %s: starting background task for agent %s", run_id, agent_id)
+
+    async def on_vm_acquired() -> None:
+        """Transition queued→running once a VM is reserved."""
+        await registry.update_run_status(run_id, "running")
+        await _event_buffer.publish(run_id, StartedEvent(workspace=workspace_path))
+
     try:
         if _vm_pool and agent_id:
             from nightshift.task import run_task_pooled
@@ -565,19 +573,28 @@ async def _run_agent_task(
                 prompt, run_id, agent, _event_buffer,
                 pool=_vm_pool, agent_id=agent_id,
                 runtime_env=runtime_env,
+                on_vm_acquired=on_vm_acquired,
             )
         else:
             from nightshift.task import run_task
 
+            await on_vm_acquired()
             await run_task(prompt, run_id, agent, _event_buffer)
         await registry.complete_run(run_id)
         logger.info("Run %s: completed successfully", run_id)
+    except asyncio.CancelledError:
+        logger.info("Run %s: interrupted by user", run_id)
+        await registry.update_run_status(run_id, "interrupted")
+        await _event_buffer.publish(run_id, InterruptedEvent(reason="user_stop"))
+        await _event_buffer.cleanup(run_id)
     except Exception as e:
         logger.exception("Run %s: failed with error", run_id)
         await registry.complete_run(run_id, error=str(e))
-    # Give SSE clients time to drain, then free memory
-    await asyncio.sleep(5)
-    _event_buffer.reap(run_id)
+    finally:
+        _run_tasks.pop(run_id, None)
+        # Give SSE clients time to drain, then free memory
+        await asyncio.sleep(5)
+        _event_buffer.reap(run_id)
 
 
 # ── Stream events ─────────────────────────────────────────────
@@ -612,6 +629,56 @@ async def stream_events(
             }
 
     return EventSourceResponse(_stream_from_db())
+
+
+# ── Run status & interrupt ────────────────────────────────────
+
+@app.get("/api/runs/{run_id}")
+async def get_run_status(
+    run_id: str,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """Poll the current status of a run."""
+    registry = _get_registry()
+    run = await registry.get_run(run_id)
+    if not run or run.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    return {
+        "id": run.id,
+        "status": run.status,
+        "created_at": run.created_at,
+        "completed_at": run.completed_at,
+        "error": run.error,
+    }
+
+
+@app.post("/api/runs/{run_id}/interrupt")
+async def interrupt_run(
+    run_id: str,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """Interrupt a queued or running run."""
+    registry = _get_registry()
+    run = await registry.get_run(run_id)
+    if not run or run.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # Already terminal — return current status (idempotent)
+    if run.status in ("completed", "error", "interrupted"):
+        return {"id": run.id, "status": run.status}
+
+    task = _run_tasks.get(run_id)
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    # Re-read status after cancellation
+    run = await registry.get_run(run_id)
+    return {"id": run.id, "status": run.status}
 
 
 # ── Server entry point ────────────────────────────────────────
