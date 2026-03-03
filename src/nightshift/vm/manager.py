@@ -123,6 +123,11 @@ class FirecrackerVM:
         self._serial_task: asyncio.Task | None = None
 
     @property
+    def instance_id(self) -> str:
+        """Identifier used by the runtime pool and driver layer."""
+        return self.vm_id
+
+    @property
     def guest_url(self) -> str:
         """Base URL to reach the guest agent's HTTP server over the TAP network.
 
@@ -523,5 +528,12 @@ class FirecrackerVM:
         # Set locally administered bit (0x02), clear multicast bit (0xFE)
         octets[0] = (octets[0] | 0x02) & 0xFE
         return ":".join(f"{o:02x}" for o in octets)
+
+    async def __aenter__(self) -> "FirecrackerVM":
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.destroy()
 
 

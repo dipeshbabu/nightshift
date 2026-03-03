@@ -27,7 +27,7 @@ from nightshift.events import EventBuffer, InterruptedEvent, StartedEvent
 from nightshift.registry import AgentRecord, AgentRegistry
 from nightshift.sdk.app import RegisteredAgent
 from nightshift.sdk.config import AgentConfig
-from nightshift.vm.network import cleanup_stale_taps
+from nightshift.vm.firecracker_driver import FirecrackerDriver
 from nightshift.vm.pool import VMPool
 
 logger = logging.getLogger(__name__)
@@ -102,9 +102,15 @@ async def lifespan(app: FastAPI):
     _event_buffer = EventBuffer(persist=_registry.save_event)
     await bootstrap_api_key(_registry)
 
-    await cleanup_stale_taps()
+    driver = FirecrackerDriver(
+        kernel_path=_config.kernel_path,
+        base_rootfs_path=_config.base_rootfs_path,
+        event_port=_config.vm_event_port,
+    )
+    await driver.cleanup_stale_resources()
 
     _vm_pool = VMPool(
+        driver=driver,
         idle_timeout=_config.vm_idle_timeout_seconds,
         default_max_vms=_config.vm_max_per_agent,
     )
@@ -554,10 +560,7 @@ async def _run_agent_task(
     runtime_env: dict[str, str] | None = None,
     workspace_path: str = "",
 ) -> None:
-    """Background task that runs an agent in a Firecracker VM.
-
-    Uses the warm VM pool when available, falls back to one-shot run_task.
-    """
+    """Background task that runs an agent in a Firecracker-backed runtime."""
     logger.info("Run %s: starting background task for agent %s", run_id, agent_id)
 
     async def on_vm_acquired() -> None:
@@ -566,20 +569,21 @@ async def _run_agent_task(
         await _event_buffer.publish(run_id, StartedEvent(workspace=workspace_path))
 
     try:
-        if _vm_pool and agent_id:
-            from nightshift.task import run_task_pooled
+        if not _vm_pool:
+            raise RuntimeError("VM pool is not initialized")
 
-            await run_task_pooled(
-                prompt, run_id, agent, _event_buffer,
-                pool=_vm_pool, agent_id=agent_id,
-                runtime_env=runtime_env,
-                on_vm_acquired=on_vm_acquired,
-            )
-        else:
-            from nightshift.task import run_task
+        from nightshift.task import run_task
 
-            await on_vm_acquired()
-            await run_task(prompt, run_id, agent, _event_buffer)
+        await run_task(
+            prompt,
+            run_id,
+            agent,
+            _event_buffer,
+            pool=_vm_pool,
+            agent_id=agent_id,
+            runtime_env=runtime_env,
+            on_vm_acquired=on_vm_acquired,
+        )
         await registry.complete_run(run_id)
         logger.info("Run %s: completed successfully", run_id)
     except asyncio.CancelledError:
