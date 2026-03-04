@@ -1,0 +1,146 @@
+syntax = "proto3";
+package nightshift.runtime.v1;
+
+option go_package = "github.com/nightshiftco/nightshift/nightshiftd/gen/nightshift/runtime/v1;runtimev1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service AgentRuntime {
+  // Agent lifecycle
+  rpc Deploy(DeployRequest) returns (Agent);
+  rpc UpdateAgent(UpdateAgentRequest) returns (Agent);
+  rpc GetAgent(GetAgentRequest) returns (Agent);
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc DeleteAgent(DeleteAgentRequest) returns (google.protobuf.Empty);
+
+  // Run lifecycle
+  rpc CreateRun(CreateRunRequest) returns (Run);
+  rpc GetRun(GetRunRequest) returns (Run);
+  rpc InterruptRun(InterruptRunRequest) returns (Run);
+
+  // Event streaming
+  rpc StreamEvents(StreamEventsRequest) returns (stream Event);
+
+  // Workspace
+  // These are primarily used for stateful agent management for now
+  rpc ListWorkspaceFiles(ListWorkspaceFilesRequest) returns (ListWorkspaceFilesResponse);
+  rpc GetWorkspaceFile(GetWorkspaceFileRequest) returns (stream Chunk);
+  rpc PutWorkspaceFile(stream Chunk) returns (PutWorkspaceFileResponse);
+}
+
+
+message DeployRequest {
+  string name = 1;
+  string image_ref = 2;
+  AgentConfigOverrides overrides = 3;
+}
+
+message AgentConfigOverrides {
+  int32 vcpu_count = 1;
+  int32 mem_size_mib = 2;
+  int32 timeout_seconds = 3;
+  int32 max_concurrent = 4;
+  string sandbox = 5;
+  map<string, string> env = 6;
+}
+
+message UpdateAgentRequest {
+  string name = 1;
+  AgentConfigOverrides overrides = 2;
+}
+
+message Agent {
+  string id = 1;
+  string name = 2;
+  string image_ref = 3;
+  AgentConfigOverrides config = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message GetAgentRequest {
+  string name = 1;
+}
+
+message ListAgentsRequest {}
+
+message ListAgentsResponse {
+  repeated Agent agents = 1;
+}
+
+message DeleteAgentRequest {
+  string name = 1;
+}
+
+message CreateRunRequest {
+  string agent_name = 1;
+  string prompt = 2;
+  map<string, string> env = 3;
+}
+
+message Run {
+  string id = 1;
+  string agent_name = 2;
+  RunPhase phase = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp completed_at = 5;
+  string error = 6;
+}
+
+enum RunPhase {
+  RUN_PHASE_UNSPECIFIED = 0;
+  RUN_PHASE_PENDING = 1;
+  RUN_PHASE_RUNNING = 2;
+  RUN_PHASE_COMPLETED = 3;
+  RUN_PHASE_ERROR = 4;
+  RUN_PHASE_INTERRUPTED = 5;
+}
+
+message GetRunRequest {
+  string run_id = 1;
+}
+
+message InterruptRunRequest {
+  string run_id = 1;
+}
+
+message StreamEventsRequest {
+  string run_id = 1;
+}
+
+message Event {
+  string run_id = 1;
+  string event_type = 2;
+  bytes payload = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+message ListWorkspaceFilesRequest {
+  string agent_name = 1;
+  string path = 2;
+}
+
+message ListWorkspaceFilesResponse {
+  repeated FileInfo files = 1;
+}
+
+message FileInfo {
+  string path = 1;
+  int64 size = 2;
+  bool is_dir = 3;
+  google.protobuf.Timestamp modified_at = 4;
+}
+
+message GetWorkspaceFileRequest {
+  string agent_name = 1;
+  string path = 2;
+}
+
+message Chunk {
+  string agent_name = 1;
+  string path = 2;
+  bytes data = 3;
+}
+
+message PutWorkspaceFileResponse {}

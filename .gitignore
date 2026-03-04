@@ -7,3 +7,8 @@ env/
 build/
 dist/
 infra/.deploy-state
+loadtest/results
+.DS_Store
+
+# Go
+nightshiftd/nightshiftd

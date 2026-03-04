@@ -1,0 +1,32 @@
+version = 1
+
+[daemon]
+state_dir = "/tmp/nightshiftd"
+socket = "/tmp/nightshiftd.sock"
+
+[pool]
+idle_timeout = "5m"
+default_max_per_agent = 3
+
+[containerd]
+address = "/run/containerd/containerd.sock"
+namespace = "nightshift"
+
+[runtime]
+default = "auto"
+
+[runtime.firecracker]
+name = "aws.firecracker"
+
+[runtime.runc]
+name = "io.containerd.runc.v2"
+
+[network]
+cni_name = "nightshift"
+
+[images]
+base = "nightshift/agent-runtime:latest"
+
+[log]
+level = "debug"
+format = "text"
