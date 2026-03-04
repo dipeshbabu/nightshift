@@ -51,24 +51,31 @@ func run(configPath string) error {
 
 	// gRPC server and register service
 	gs := grpc.NewServer()
-	srv := server.New(database, logger)
+	srv := server.New(database, logger, cfg.AgentDefaults)
 	srv.Register(gs)
 
-	socketPath := cfg.Daemon.Socket
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
-		return fmt.Errorf("create socket dir: %w", err)
+	var lis net.Listener
+	if cfg.Daemon.Listen != "" {
+		// TCP listener (for dev tools like Postman)
+		lis, err = net.Listen("tcp", cfg.Daemon.Listen)
+		if err != nil {
+			return fmt.Errorf("listen on %s: %w", cfg.Daemon.Listen, err)
+		}
+		logger.Info("listening", "addr", cfg.Daemon.Listen)
+	} else {
+		socketPath := cfg.Daemon.Socket
+		if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
+			return fmt.Errorf("create socket dir: %w", err)
+		}
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale socket: %w", err)
+		}
+		lis, err = net.Listen("unix", socketPath)
+		if err != nil {
+			return fmt.Errorf("listen on %s: %w", socketPath, err)
+		}
+		logger.Info("listening", "socket", socketPath)
 	}
-
-	// Remove stale socket file
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove stale socket: %w", err)
-	}
-
-	lis, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", socketPath, err)
-	}
-	logger.Info("listening", "socket", socketPath)
 
 	// shutdown signals
 	sigCh := make(chan os.Signal, 1)

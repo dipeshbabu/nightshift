@@ -23,19 +23,29 @@ func (d *Duration) UnmarshalText(text []byte) error {
 }
 
 type Config struct {
-	Version    int              `toml:"version"`
-	Daemon     DaemonConfig     `toml:"daemon"`
-	Pool       PoolConfig       `toml:"pool"`
-	Containerd ContainerdConfig `toml:"containerd"`
-	Runtime    RuntimeConfig    `toml:"runtime"`
-	Network    NetworkConfig    `toml:"network"`
-	Images     ImagesConfig     `toml:"images"`
-	Log        LogConfig        `toml:"log"`
+	Version       int                 `toml:"version"`
+	Daemon        DaemonConfig        `toml:"daemon"`
+	AgentDefaults AgentDefaultsConfig `toml:"agent_defaults"`
+	Pool          PoolConfig          `toml:"pool"`
+	Containerd    ContainerdConfig    `toml:"containerd"`
+	Runtime       RuntimeConfig       `toml:"runtime"`
+	Network       NetworkConfig       `toml:"network"`
+	Images        ImagesConfig        `toml:"images"`
+	Log           LogConfig           `toml:"log"`
+}
+
+type AgentDefaultsConfig struct {
+	VcpuCount      int32  `toml:"vcpu_count"`
+	MemSizeMib     int32  `toml:"mem_size_mib"`
+	TimeoutSeconds int32  `toml:"timeout_seconds"`
+	MaxConcurrent  int32  `toml:"max_concurrent"`
+	Sandbox        string `toml:"sandbox"`
 }
 
 type DaemonConfig struct {
 	StateDir string `toml:"state_dir"`
 	Socket   string `toml:"socket"`
+	Listen   string `toml:"listen"` // optional TCP address (e.g. "127.0.0.1:50051"); overrides socket
 }
 
 type PoolConfig struct {
@@ -78,6 +88,13 @@ func Default() *Config {
 		Daemon: DaemonConfig{
 			StateDir: "/var/lib/nightshift",
 			Socket:   "/run/nightshift/nightshiftd.sock",
+		},
+		AgentDefaults: AgentDefaultsConfig{
+			VcpuCount:      2,
+			MemSizeMib:     512,
+			TimeoutSeconds: 300,
+			MaxConcurrent:  3,
+			Sandbox:        "runc",
 		},
 		Pool: PoolConfig{
 			IdleTimeout:       Duration{5 * time.Minute},
