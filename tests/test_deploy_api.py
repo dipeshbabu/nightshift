@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from nightshift.auth import hash_api_key
 from nightshift.registry import AgentRegistry
-from nightshift.server import app, _auth_dependency, _build_registered_agent
+from nightshift.server import app, _auth_dependency, _build_registered_agent, _run_tasks
 import nightshift.server as srv
 
 
@@ -429,3 +429,263 @@ async def test_build_registered_agent_resolves_uploaded_workspace(setup_server):
     registered = _build_registered_agent(agent_record)
     expected = os.path.join(agent_record.storage_path, "__workspace__")
     assert registered.config.workspace == expected
+
+
+# ── PUT /api/agents/{name}/workspace/{file_path} tests ────────
+
+
+async def _deploy_stateful_agent(client, name: str = "stateful_agent"):
+    """Deploy a stateful agent and return the response."""
+    archive = _make_archive({"agent.py": "async def agent(prompt): yield 'ok'"})
+    return await client.post(
+        "/api/agents",
+        data={
+            "name": name,
+            "source_filename": "agent.py",
+            "function_name": "agent",
+            "config_json": json.dumps({"stateful": True}),
+        },
+        files={"archive": ("archive.tar.gz", archive, "application/gzip")},
+        headers=_auth_headers(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_upload_workspace_file(setup_server):
+    """Basic upload then download roundtrip."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await _deploy_stateful_agent(client)
+
+        r = await client.put(
+            "/api/agents/stateful_agent/workspace/hello.txt",
+            content=b"hello world",
+            headers=_auth_headers(),
+        )
+        assert r.status_code == 201
+        assert r.json() == {"path": "hello.txt", "size": 11}
+
+        # Download and verify
+        r = await client.get(
+            "/api/agents/stateful_agent/workspace/hello.txt",
+            headers=_auth_headers(),
+        )
+        assert r.status_code == 200
+        assert r.content == b"hello world"
+
+
+@pytest.mark.asyncio
+async def test_upload_workspace_file_creates_dirs(setup_server):
+    """Nested paths auto-create intermediate directories."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await _deploy_stateful_agent(client)
+
+        r = await client.put(
+            "/api/agents/stateful_agent/workspace/a/b/c.txt",
+            content=b"nested",
+            headers=_auth_headers(),
+        )
+        assert r.status_code == 201
+        assert r.json()["path"] == "a/b/c.txt"
+
+        r = await client.get(
+            "/api/agents/stateful_agent/workspace/a/b/c.txt",
+            headers=_auth_headers(),
+        )
+        assert r.status_code == 200
+        assert r.content == b"nested"
+
+
+@pytest.mark.asyncio
+async def test_upload_workspace_file_overwrites(setup_server):
+    """PUT is idempotent — overwrites existing file."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await _deploy_stateful_agent(client)
+
+        await client.put(
+            "/api/agents/stateful_agent/workspace/file.txt",
+            content=b"version1",
+            headers=_auth_headers(),
+        )
+        r = await client.put(
+            "/api/agents/stateful_agent/workspace/file.txt",
+            content=b"version2",
+            headers=_auth_headers(),
+        )
+        assert r.status_code == 201
+        assert r.json()["size"] == 8
+
+        r = await client.get(
+            "/api/agents/stateful_agent/workspace/file.txt",
+            headers=_auth_headers(),
+        )
+        assert r.content == b"version2"
+
+
+@pytest.mark.asyncio
+async def test_upload_workspace_file_path_traversal(setup_server):
+    """Path traversal with ../ returns 400."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await _deploy_stateful_agent(client)
+
+        # Use %2e%2e to bypass URL normalization so the traversal reaches the handler
+        r = await client.put(
+            "/api/agents/stateful_agent/workspace/%2e%2e/%2e%2e/etc/passwd",
+            content=b"nope",
+            headers=_auth_headers(),
+        )
+        assert r.status_code == 400
+        assert "Invalid file path" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_upload_workspace_file_not_stateful(setup_server):
+    """Non-stateful agent returns 400."""
+    archive = _make_archive({"agent.py": "pass"})
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await client.post(
+            "/api/agents",
+            data={
+                "name": "non_stateful",
+                "source_filename": "agent.py",
+                "function_name": "non_stateful",
+                "config_json": json.dumps({"stateful": False}),
+            },
+            files={"archive": ("archive.tar.gz", archive, "application/gzip")},
+            headers=_auth_headers(),
+        )
+
+        r = await client.put(
+            "/api/agents/non_stateful/workspace/file.txt",
+            content=b"data",
+            headers=_auth_headers(),
+        )
+        assert r.status_code == 400
+        assert "not stateful" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_upload_workspace_file_agent_not_found(setup_server):
+    """Missing agent returns 404."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.put(
+            "/api/agents/ghost/workspace/file.txt",
+            content=b"data",
+            headers=_auth_headers(),
+        )
+        assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_upload_workspace_file_no_auth(setup_server):
+    """No auth header returns 401."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.put(
+            "/api/agents/any/workspace/file.txt",
+            content=b"data",
+        )
+        assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_upload_workspace_file_appears_in_listing(setup_server):
+    """Uploaded file shows up in GET /workspace listing."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await _deploy_stateful_agent(client)
+
+        await client.put(
+            "/api/agents/stateful_agent/workspace/listed.txt",
+            content=b"findme",
+            headers=_auth_headers(),
+        )
+
+        r = await client.get(
+            "/api/agents/stateful_agent/workspace",
+            headers=_auth_headers(),
+        )
+        assert r.status_code == 200
+        paths = [f["path"] for f in r.json()["files"]]
+        assert "listed.txt" in paths
+
+
+# ── Run status & interrupt tests ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_run_status(setup_server):
+    """GET /api/runs/{id} returns run details."""
+    registry = setup_server
+    agent = await registry.upsert_agent(
+        tenant_id=TEST_TENANT, name="status_agent",
+        source_filename="agent.py", function_name="status_agent",
+        config_json="{}", storage_path="/tmp/agents/s",
+    )
+    run = await registry.create_run(agent.id, TEST_TENANT, "hello")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.get(f"/api/runs/{run.id}", headers=_auth_headers())
+        assert r.status_code == 200
+        data = r.json()
+        assert data["id"] == run.id
+        assert data["status"] == "queued"
+        assert data["created_at"] is not None
+        assert data["completed_at"] is None
+        assert data["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_run_status_not_found(setup_server):
+    """GET /api/runs/{id} returns 404 for unknown run."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.get("/api/runs/nonexistent-id", headers=_auth_headers())
+        assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_interrupt_completed_run_is_idempotent(setup_server):
+    """POST /api/runs/{id}/interrupt on a finished run returns current status."""
+    registry = setup_server
+    agent = await registry.upsert_agent(
+        tenant_id=TEST_TENANT, name="done_agent",
+        source_filename="agent.py", function_name="done_agent",
+        config_json="{}", storage_path="/tmp/agents/d",
+    )
+    run = await registry.create_run(agent.id, TEST_TENANT, "hello")
+    await registry.complete_run(run.id)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post(f"/api/runs/{run.id}/interrupt", headers=_auth_headers())
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_interrupt_run_not_found(setup_server):
+    """POST /api/runs/{id}/interrupt returns 404 for unknown run."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/api/runs/nonexistent-id/interrupt", headers=_auth_headers())
+        assert r.status_code == 404

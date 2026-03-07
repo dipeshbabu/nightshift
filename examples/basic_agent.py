@@ -20,6 +20,7 @@ app = NightshiftApp()
         vcpu_count=2,
         mem_size_mib=2048,
         # max_concurrent_vms=2,
+        forward_secrets=["ANTHROPIC_API_KEY"],
         stateful=True,
     )
 )

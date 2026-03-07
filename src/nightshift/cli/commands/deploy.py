@@ -96,6 +96,15 @@ def _discover_agents(file_path: str) -> dict:
             raise click.ClickException(
                 f"Agent '{name}': workspace directory does not exist: {workspace}"
             )
+        # Resolve forward_secrets from the deployer's local environment
+        secrets: dict[str, str] = {}
+        for key in agent.config.forward_secrets:
+            val = os.environ.get(key)
+            if val is None:
+                click.echo(f"  Warning: forward_secrets key '{key}' not found in environment", err=True)
+            else:
+                secrets[key] = val
+
         agents[name] = {
             "function_name": agent.fn.__name__,
             "workspace": workspace,
@@ -108,6 +117,7 @@ def _discover_agents(file_path: str) -> dict:
                 "env": agent.config.env,
                 "max_concurrent_vms": agent.config.max_concurrent_vms,
                 "stateful": agent.config.stateful,
+                "secrets": secrets,
             },
         }
     return agents

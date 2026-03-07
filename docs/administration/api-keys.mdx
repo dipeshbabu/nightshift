@@ -15,7 +15,7 @@ There are two kinds of keys:
 
 ## Bootstrap key
 
-The bootstrap key is set via the `NIGHTSHIFT_API_KEY` environment variable. When the server starts, it hashes the value and stores it in the database. This is the only key that bypasses the API. 
+The bootstrap key is set via the `NIGHTSHIFT_API_KEY` environment variable. When the server starts, it hashes the value and stores it in the database. This is the only key that bypasses the API.
 
 The operator generates the key themselves:
 
@@ -90,7 +90,7 @@ Use the hash prefix from `api-key list`. Provide more characters if the prefix i
 
 ## Multi-tenant isolation
 
-Agents and runs are scoped by tenant ID. One tenant cannot see or run another's agents. 
+Agents and runs are scoped by tenant ID. One tenant cannot see or run another's agents.
 
 ```bash
 nightshift api-key generate --tenant acme-corp --label "acme production"

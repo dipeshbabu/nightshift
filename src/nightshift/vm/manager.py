@@ -30,6 +30,10 @@ from nightshift.events import TERMINAL_EVENTS, EventLog
 from nightshift.vm.network import TapConfig, create_tap, destroy_tap
 from nightshift.vm.rootfs import copy_workspace_out, create_overlay, destroy_overlay
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class VMConfig:
@@ -113,6 +117,16 @@ class FirecrackerVM:
         # Cleaned up entirely in destroy() via shutil.rmtree.
         self._overlay_dir: str = ""
 
+        # Serial console output captured from Firecracker's stdout.
+        # Contains kernel messages, guest init output, agent logs, panic traces, etc.
+        self._serial_lines: list[str] = []
+        self._serial_task: asyncio.Task | None = None
+
+    @property
+    def instance_id(self) -> str:
+        """Identifier used by the runtime pool and driver layer."""
+        return self.vm_id
+
     @property
     def guest_url(self) -> str:
         """Base URL to reach the guest agent's HTTP server over the TAP network.
@@ -171,6 +185,9 @@ class FirecrackerVM:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+
+        # Start reading serial console output (Firecracker stdout) in the background.
+        self._serial_task = asyncio.create_task(self._read_serial())
 
         # The socket file is created asynchronously by the firecracker process.
         # Poll up to 5 seconds (50 * 100ms) for it to appear before giving up.
@@ -239,6 +256,19 @@ class FirecrackerVM:
         # This confirms that the kernel booted, init ran, and the agent process
         # is up and ready to accept work.
         await self._wait_for_health()
+
+    async def _read_serial(self) -> None:
+        """Background task: read serial console output from Firecracker stdout."""
+        assert self._proc and self._proc.stdout
+        try:
+            async for line in self._proc.stdout:
+                self._serial_lines.append(line.decode(errors="replace").rstrip("\n"))
+        except Exception:
+            pass
+
+    def get_serial_log(self) -> str:
+        """Return all captured serial console output."""
+        return "\n".join(self._serial_lines)
 
     async def wait_for_completion(
         self,
@@ -343,10 +373,11 @@ class FirecrackerVM:
 
         Cleans up in reverse order of creation:
             1. Kill the firecracker process (if still running)
-            2. Remove the TAP network device
-            3. Remove the overlay rootfs image (unmount + delete)
-            4. Remove the API socket file
-            5. Remove the temporary directory
+            2. Log exit code and serial console output for post-mortem debugging
+            3. Remove the TAP network device
+            4. Remove the overlay rootfs image (unmount + delete)
+            5. Remove the API socket file
+            6. Remove the temporary directory
 
         Safe to call multiple times — each step is guarded by a None/existence check.
         """
@@ -355,6 +386,29 @@ class FirecrackerVM:
         if self._proc and self._proc.returncode is None:
             self._proc.kill()
             await self._proc.wait()
+
+        # Let the serial reader finish draining any buffered output.
+        if self._serial_task and not self._serial_task.done():
+            try:
+                await asyncio.wait_for(self._serial_task, timeout=2.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+
+        # Log exit code and serial output for post-mortem debugging.
+        if self._proc and self._proc.returncode is not None:
+            rc = self._proc.returncode
+            exit_info = {0: "clean shutdown", 12: "host OOM", 148: "seccomp violation"}.get(
+                rc, "unknown"
+            )
+            logger.info("VM %s exited: code=%s (%s)", self.vm_id, rc, exit_info)
+            if self._serial_lines:
+                tail = self._serial_lines[-50:]
+                logger.info(
+                    "VM %s serial output (last %d lines):\n%s",
+                    self.vm_id,
+                    len(tail),
+                    "\n".join(tail),
+                )
 
         # Delete the TAP device from the host network stack.
         if self._tap:
@@ -474,5 +528,12 @@ class FirecrackerVM:
         # Set locally administered bit (0x02), clear multicast bit (0xFE)
         octets[0] = (octets[0] | 0x02) & 0xFE
         return ":".join(f"{o:02x}" for o in octets)
+
+    async def __aenter__(self) -> "FirecrackerVM":
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.destroy()
 
 

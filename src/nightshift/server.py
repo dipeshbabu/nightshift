@@ -14,19 +14,20 @@ import tarfile
 import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from nightshift.auth import bootstrap_api_key, generate_api_key, get_tenant_id, hash_api_key
 from nightshift.config import NightshiftConfig
-from nightshift.events import EventBuffer, StartedEvent
+from nightshift.events import EventBuffer, InterruptedEvent, StartedEvent
 from nightshift.registry import AgentRecord, AgentRegistry
 from nightshift.sdk.app import RegisteredAgent
 from nightshift.sdk.config import AgentConfig
-from nightshift.vm.network import cleanup_stale_taps
+from nightshift.vm.firecracker_driver import FirecrackerDriver
 from nightshift.vm.pool import VMPool
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ _registry: AgentRegistry | None = None
 _event_buffer: EventBuffer = EventBuffer()
 _config: NightshiftConfig = NightshiftConfig()
 _vm_pool: VMPool | None = None
+_run_tasks: dict[str, asyncio.Task] = {}  # run_id → background task
 
 
 def _get_registry() -> AgentRegistry:
@@ -58,10 +60,35 @@ async def _auth_dependency(request: Request) -> str:
     return tenant_id
 
 
+def _base_url(request: Request) -> str:
+    """Derive the public base URL from the incoming request.
+
+    Behind a reverse proxy with ``--proxy-headers``, ``request.base_url``
+    already reflects ``X-Forwarded-Host`` / ``X-Forwarded-Proto``.
+    """
+    return str(request.base_url).rstrip("/")
+
+
+def _agent_response(agent: AgentRecord, base: str) -> dict[str, Any]:
+    """Build the JSON-serialisable dict for an agent, including URLs."""
+    config = json.loads(agent.config_json)
+    stateful = config.get("stateful", False)
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "source_filename": agent.source_filename,
+        "function_name": agent.function_name,
+        "stateful": stateful,
+        "invoke_url": f"{base}/api/agents/{agent.name}/runs",
+        "workspace_url": f"{base}/api/agents/{agent.name}/workspace" if stateful else None,
+        "created_at": agent.created_at,
+        "updated_at": agent.updated_at,
+    }
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _registry, _config, _vm_pool
+    global _registry, _config, _vm_pool, _event_buffer
 
     logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
 
@@ -72,11 +99,18 @@ async def lifespan(app: FastAPI):
 
     _registry = AgentRegistry(_config.db_path)
     await _registry.init_db()
+    _event_buffer = EventBuffer(persist=_registry.save_event)
     await bootstrap_api_key(_registry)
 
-    await cleanup_stale_taps()
+    driver = FirecrackerDriver(
+        kernel_path=_config.kernel_path,
+        base_rootfs_path=_config.base_rootfs_path,
+        event_port=_config.vm_event_port,
+    )
+    await driver.cleanup_stale_resources()
 
     _vm_pool = VMPool(
+        driver=driver,
         idle_timeout=_config.vm_idle_timeout_seconds,
         default_max_vms=_config.vm_max_per_agent,
     )
@@ -259,20 +293,40 @@ async def deploy_agent(
 # ── List agents ───────────────────────────────────────────────
 
 @app.get("/api/agents")
-async def list_agents(tenant_id: str = Depends(_auth_dependency)):
+async def list_agents(request: Request, tenant_id: str = Depends(_auth_dependency)):
     registry = _get_registry()
     agents = await registry.list_agents(tenant_id)
-    return [
-        {
-            "id": a.id,
-            "name": a.name,
-            "source_filename": a.source_filename,
-            "function_name": a.function_name,
-            "created_at": a.created_at,
-            "updated_at": a.updated_at,
-        }
-        for a in agents
-    ]
+    base = _base_url(request)
+    return [_agent_response(a, base) for a in agents]
+
+
+# ── Agent detail ──────────────────────────────────────────────
+
+@app.get("/api/agents/{name}")
+async def get_agent(
+    name: str,
+    request: Request,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """Return details for a single agent including invoke/workspace URLs."""
+    registry = _get_registry()
+    agent = await registry.get_agent(tenant_id, name)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
+
+    base = _base_url(request)
+    config = json.loads(agent.config_json)
+    stateful = config.get("stateful", False)
+
+    return {
+        **_agent_response(agent, base),
+        "config": {
+            "vcpu_count": config.get("vcpu_count", 2),
+            "mem_size_mib": config.get("mem_size_mib", 2048),
+            "timeout_seconds": config.get("timeout_seconds", 1800),
+            "stateful": stateful,
+        },
+    }
 
 
 # ── Delete agent ──────────────────────────────────────────────
@@ -299,6 +353,121 @@ async def delete_agent(
     return {"status": "deleted", "name": name}
 
 
+# ── Workspace ─────────────────────────────────────────────────
+
+def _workspace_dir(agent: AgentRecord) -> str:
+    """Return the workspace directory for a stateful agent."""
+    return os.path.join(agent.storage_path, "__workspace__")
+
+
+@app.get("/api/agents/{name}/workspace")
+async def list_workspace(
+    name: str,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """List files in a stateful agent's workspace."""
+    registry = _get_registry()
+    agent = await registry.get_agent(tenant_id, name)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
+
+    config = json.loads(agent.config_json)
+    if not config.get("stateful", False):
+        raise HTTPException(status_code=400, detail="Agent is not stateful")
+
+    ws_dir = _workspace_dir(agent)
+    if not os.path.isdir(ws_dir):
+        return {"files": []}
+
+    skip = {".git", "__pycache__", ".venv", "node_modules", ".ruff_cache"}
+    files: list[dict[str, Any]] = []
+    for dirpath, dirnames, filenames in os.walk(ws_dir):
+        dirnames[:] = [d for d in dirnames if d not in skip]
+        rel_dir = os.path.relpath(dirpath, ws_dir)
+        # Include directories (except the root itself)
+        if rel_dir != ".":
+            st = os.stat(dirpath)
+            files.append({
+                "path": rel_dir,
+                "type": "directory",
+                "size": 0,
+                "modified_at": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+            })
+        for fname in filenames:
+            full = os.path.join(dirpath, fname)
+            rel = os.path.relpath(full, ws_dir)
+            st = os.stat(full)
+            files.append({
+                "path": rel,
+                "type": "file",
+                "size": st.st_size,
+                "modified_at": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+            })
+
+    return {"files": files}
+
+
+@app.get("/api/agents/{name}/workspace/{file_path:path}")
+async def download_workspace_file(
+    name: str,
+    file_path: str,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """Download a file from a stateful agent's workspace."""
+    registry = _get_registry()
+    agent = await registry.get_agent(tenant_id, name)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
+
+    config = json.loads(agent.config_json)
+    if not config.get("stateful", False):
+        raise HTTPException(status_code=400, detail="Agent is not stateful")
+
+    ws_dir = os.path.realpath(_workspace_dir(agent))
+    resolved = os.path.realpath(os.path.join(ws_dir, file_path))
+
+    # Path traversal prevention
+    if not resolved.startswith(ws_dir + os.sep) and resolved != ws_dir:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(resolved)
+
+
+@app.put("/api/agents/{name}/workspace/{file_path:path}")
+async def upload_workspace_file(
+    name: str,
+    file_path: str,
+    request: Request,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """Upload a file to a stateful agent's workspace."""
+    registry = _get_registry()
+    agent = await registry.get_agent(tenant_id, name)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
+
+    config = json.loads(agent.config_json)
+    if not config.get("stateful", False):
+        raise HTTPException(status_code=400, detail="Agent is not stateful")
+
+    ws_dir = os.path.realpath(_workspace_dir(agent))
+    resolved = os.path.realpath(os.path.join(ws_dir, file_path))
+
+    if not resolved.startswith(ws_dir + os.sep) and resolved != ws_dir:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    os.makedirs(os.path.dirname(resolved), exist_ok=True)
+
+    body = await request.body()
+    with open(resolved, "wb") as f:
+        f.write(body)
+
+    return JSONResponse({"path": file_path, "size": len(body)}, status_code=201)
+
+
 # ── Run agent ─────────────────────────────────────────────────
 
 def _build_registered_agent(
@@ -313,6 +482,7 @@ def _build_registered_agent(
     """
     config_data = json.loads(agent.config_json)
     env = config_data.get("env", {})
+    env.update(config_data.get("secrets", {}))
 
     # For non-pooled (legacy) runs, merge runtime_env into static env.
     # For pooled runs, the caller passes runtime_env separately.
@@ -320,8 +490,9 @@ def _build_registered_agent(
         env.update(runtime_env)
 
     workspace = config_data.get("workspace", "")
-    if workspace == "__uploaded__":
+    if workspace == "__uploaded__" or (config_data.get("stateful", False) and not workspace):
         workspace = os.path.join(agent.storage_path, "__workspace__")
+        os.makedirs(workspace, exist_ok=True)
 
     agent_config = AgentConfig(
         workspace=workspace,
@@ -364,20 +535,20 @@ async def create_run(
     if not agent_record:
         raise HTTPException(status_code=404, detail=f"Agent not found: {name}")
 
-    run = await registry.create_run(agent_record.id, tenant_id, prompt)
+    run = await registry.create_run(agent_record.id, tenant_id, prompt, status="queued")
 
-    await _event_buffer.publish(run.id, StartedEvent(workspace=agent_record.storage_path))
-
-    # Launch task in background
+    # Launch task in background — StartedEvent is deferred until a VM is acquired
     registered = _build_registered_agent(agent_record, runtime_env=runtime_env)
-    asyncio.create_task(
+    task = asyncio.create_task(
         _run_agent_task(
             run.id, prompt, registered, registry,
             agent_id=agent_record.id, runtime_env=runtime_env,
+            workspace_path=agent_record.storage_path,
         )
     )
+    _run_tasks[run.id] = task
 
-    return JSONResponse({"id": run.id, "status": "started"}, status_code=202)
+    return JSONResponse({"id": run.id, "status": "queued"}, status_code=202)
 
 
 async def _run_agent_task(
@@ -387,30 +558,47 @@ async def _run_agent_task(
     registry: AgentRegistry,
     agent_id: str = "",
     runtime_env: dict[str, str] | None = None,
+    workspace_path: str = "",
 ) -> None:
-    """Background task that runs an agent in a Firecracker VM.
-
-    Uses the warm VM pool when available, falls back to one-shot run_task.
-    """
+    """Background task that runs an agent in a Firecracker-backed runtime."""
     logger.info("Run %s: starting background task for agent %s", run_id, agent_id)
+
+    async def on_vm_acquired() -> None:
+        """Transition queued→running once a VM is reserved."""
+        await registry.update_run_status(run_id, "running")
+        await _event_buffer.publish(run_id, StartedEvent(workspace=workspace_path))
+
     try:
-        if _vm_pool and agent_id:
-            from nightshift.task import run_task_pooled
+        if not _vm_pool:
+            raise RuntimeError("VM pool is not initialized")
 
-            await run_task_pooled(
-                prompt, run_id, agent, _event_buffer,
-                pool=_vm_pool, agent_id=agent_id,
-                runtime_env=runtime_env,
-            )
-        else:
-            from nightshift.task import run_task
+        from nightshift.task import run_task
 
-            await run_task(prompt, run_id, agent, _event_buffer)
+        await run_task(
+            prompt,
+            run_id,
+            agent,
+            _event_buffer,
+            pool=_vm_pool,
+            agent_id=agent_id,
+            runtime_env=runtime_env,
+            on_vm_acquired=on_vm_acquired,
+        )
         await registry.complete_run(run_id)
         logger.info("Run %s: completed successfully", run_id)
+    except asyncio.CancelledError:
+        logger.info("Run %s: interrupted by user", run_id)
+        await registry.update_run_status(run_id, "interrupted")
+        await _event_buffer.publish(run_id, InterruptedEvent(reason="user_stop"))
+        await _event_buffer.cleanup(run_id)
     except Exception as e:
         logger.exception("Run %s: failed with error", run_id)
         await registry.complete_run(run_id, error=str(e))
+    finally:
+        _run_tasks.pop(run_id, None)
+        # Give SSE clients time to drain, then free memory
+        await asyncio.sleep(5)
+        _event_buffer.reap(run_id)
 
 
 # ── Stream events ─────────────────────────────────────────────
@@ -428,12 +616,73 @@ async def stream_events(
     if run.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    async def _stream_and_reap():
-        async for event in _event_buffer.stream_sse(run_id):
-            yield event
-        _event_buffer.reap(run_id)
+    if _event_buffer.has_run(run_id):
+        async def _stream_live():
+            async for event in _event_buffer.stream_sse(run_id):
+                yield event
 
-    return EventSourceResponse(_stream_and_reap())
+        return EventSourceResponse(_stream_live())
+
+    # Run already reaped from memory — replay from DB
+    async def _stream_from_db():
+        events = await registry.get_run_events(run_id)
+        for event_type, payload in events:
+            yield {
+                "event": event_type,
+                "data": json.dumps({"type": event_type, **payload}, default=str),
+            }
+
+    return EventSourceResponse(_stream_from_db())
+
+
+# ── Run status & interrupt ────────────────────────────────────
+
+@app.get("/api/runs/{run_id}")
+async def get_run_status(
+    run_id: str,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """Poll the current status of a run."""
+    registry = _get_registry()
+    run = await registry.get_run(run_id)
+    if not run or run.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    return {
+        "id": run.id,
+        "status": run.status,
+        "created_at": run.created_at,
+        "completed_at": run.completed_at,
+        "error": run.error,
+    }
+
+
+@app.post("/api/runs/{run_id}/interrupt")
+async def interrupt_run(
+    run_id: str,
+    tenant_id: str = Depends(_auth_dependency),
+):
+    """Interrupt a queued or running run."""
+    registry = _get_registry()
+    run = await registry.get_run(run_id)
+    if not run or run.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # Already terminal — return current status (idempotent)
+    if run.status in ("completed", "error", "interrupted"):
+        return {"id": run.id, "status": run.status}
+
+    task = _run_tasks.get(run_id)
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    # Re-read status after cancellation
+    run = await registry.get_run(run_id)
+    return {"id": run.id, "status": run.status}
 
 
 # ── Server entry point ────────────────────────────────────────

@@ -24,7 +24,7 @@
 
 # Nightshift
 
-Nightshift runs AI agents in isolated [Firecracker](https://firecracker-microvm.github.io/) microVMs on bare-metal infrastructure. 
+Nightshift runs AI agents in isolated [Firecracker](https://firecracker-microvm.github.io/) microVMs on bare-metal infrastructure.
 Each agent gets its own microVM with a dedicated filesystem, network, and resource limits; so agents can execute code, edit files, and make network calls without affecting the host or each other.
 
 ## Installation

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from nightshift.config import NightshiftConfig
 from nightshift.protocol.packaging import cleanup_package, package_agent
 from nightshift.sdk.app import RegisteredAgent
-from nightshift.vm.manager import FirecrackerVM, VMConfig
+from nightshift.vm.runtime import SandboxDriver, SandboxInstance, RuntimeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ AGENT_PKG_DIR = "/opt/nightshift/agent_pkg"
 class _PoolEntry:
     """Tracks a single VM in the pool."""
 
-    vm: FirecrackerVM | None
+    vm: SandboxInstance | None
     agent_id: str
     pkg_dir: str
     staging_dir: str
@@ -44,7 +44,8 @@ class _PoolEntry:
 class VMPool:
     """Multi-VM pool with checkout/checkin, idle timeout, and scaling."""
 
-    def __init__(self, idle_timeout: int, default_max_vms: int) -> None:
+    def __init__(self, driver: SandboxDriver, idle_timeout: int, default_max_vms: int) -> None:
+        self._driver = driver
         self._agents: dict[str, list[_PoolEntry]] = {}
         self._idle_timeout = idle_timeout
         self._default_max_vms = default_max_vms
@@ -55,7 +56,7 @@ class VMPool:
         agent_id: str,
         agent: RegisteredAgent,
         config: NightshiftConfig,
-    ) -> FirecrackerVM:
+    ) -> SandboxInstance:
         """Get a warm VM or cold-start a new one.
 
         Blocks if all VMs are busy and at the concurrency limit.
@@ -125,7 +126,7 @@ class VMPool:
             assert entry.vm is not None
             healthy = await entry.vm.is_healthy_async()
             if not healthy:
-                logger.warning("Warm VM %s unhealthy, removing", entry.vm.vm_id)
+                logger.warning("Warm VM %s unhealthy, removing", entry.vm.instance_id)
                 await self._remove_entry(agent_id, entry)
                 raise RuntimeError(
                     f"Warm VM unhealthy for agent {agent_id}"
@@ -138,8 +139,9 @@ class VMPool:
             vm = await self._cold_start(entry, agent, config)
             entry.vm = vm
             return vm
-        except Exception:
-            # Clean up the placeholder on failure
+        except BaseException:
+            # Clean up the placeholder on failure (including CancelledError,
+            # which inherits from BaseException, not Exception, in Python 3.9+).
             async with self._cond:
                 entries = self._agents.get(agent_id, [])
                 if entry in entries:
@@ -147,9 +149,9 @@ class VMPool:
                 self._cond.notify_all()
             raise
 
-    async def checkin(self, agent_id: str, vm: FirecrackerVM) -> None:
+    async def checkin(self, agent_id: str, vm: SandboxInstance) -> None:
         """Return a VM to the pool after a successful run."""
-        logger.info("Checkin VM %s for agent %s", vm.vm_id, agent_id)
+        logger.info("Checkin VM %s for agent %s", vm.instance_id, agent_id)
         async with self._cond:
             entries = self._agents.get(agent_id, [])
             for e in entries:
@@ -160,14 +162,19 @@ class VMPool:
                     )
                     logger.info(
                         "VM %s checked in, idle timer started (%ds)",
-                        vm.vm_id, self._idle_timeout,
+                        vm.instance_id,
+                        self._idle_timeout,
                     )
                     break
             else:
-                logger.warning("Checkin: VM %s not found in pool for agent %s", vm.vm_id, agent_id)
+                logger.warning(
+                    "Checkin: VM %s not found in pool for agent %s",
+                    vm.instance_id,
+                    agent_id,
+                )
             self._cond.notify_all()
 
-    async def invalidate_vm(self, agent_id: str, vm: FirecrackerVM) -> None:
+    async def invalidate_vm(self, agent_id: str, vm: SandboxInstance) -> None:
         """Destroy one specific VM (e.g. on error during a run)."""
         async with self._cond:
             entries = self._agents.get(agent_id, [])
@@ -210,8 +217,8 @@ class VMPool:
         entry: _PoolEntry,
         agent: RegisteredAgent,
         config: NightshiftConfig,
-    ) -> FirecrackerVM:
-        """Provision a new VM from scratch."""
+    ) -> SandboxInstance:
+        """Provision a new sandbox instance from scratch."""
         workspace = entry.workspace_dest
 
         # Package agent in a thread (synchronous file I/O)
@@ -238,24 +245,21 @@ class VMPool:
         # Build static env vars (forward_env + agent.config.env + NIGHTSHIFT_*)
         env_vars = _build_static_env_vars(agent, config)
 
-        vm_config = VMConfig(
-            kernel_path=config.kernel_path,
-            base_rootfs_path=config.base_rootfs_path,
+        runtime_config = RuntimeConfig(
             workspace_path=staging_dir,
             agent_pkg_path=pkg_dir,
             env_vars=env_vars,
             vcpu_count=agent.config.vcpu_count,
             mem_size_mib=agent.config.mem_size_mib,
-            event_port=config.vm_event_port,
             health_timeout=config.vm_health_timeout_seconds,
         )
 
-        vm_id = str(uuid.uuid4())
-        vm = FirecrackerVM(vm_id=vm_id, config=vm_config)
-        await vm.start()
+        instance_id = str(uuid.uuid4())
+        instance = self._driver.create_instance(instance_id, runtime_config)
+        await instance.start()
 
-        logger.info("Cold-started VM %s for agent %s", vm_id, entry.agent_id)
-        return vm
+        logger.info("Cold-started instance %s for agent %s", instance_id, entry.agent_id)
+        return instance
 
     async def _idle_expire(self, agent_id: str, entry: _PoolEntry) -> None:
         """Idle timer: destroy the VM after timeout if still idle."""
@@ -274,7 +278,7 @@ class VMPool:
 
         logger.info(
             "Idle timeout: destroying VM %s for agent %s",
-            entry.vm.vm_id if entry.vm else "?",
+            entry.vm.instance_id if entry.vm else "?",
             agent_id,
         )
         await self._destroy_entry(entry)
@@ -297,19 +301,24 @@ class VMPool:
         if entry.vm:
             try:
                 if entry.stateful:
-                    logger.info("Extracting workspace for stateful VM %s → %s", entry.vm.vm_id, entry.workspace_dest)
+                    logger.info(
+                        "Extracting workspace for stateful VM %s → %s",
+                        entry.vm.instance_id,
+                        entry.workspace_dest,
+                    )
                     await entry.vm.copy_workspace_out(entry.workspace_dest)
-                    logger.info("Workspace extracted for VM %s", entry.vm.vm_id)
+                    logger.info("Workspace extracted for VM %s", entry.vm.instance_id)
             except Exception:
                 logger.exception(
-                    "Failed to extract workspace for VM %s", entry.vm.vm_id
+                    "Failed to extract workspace for VM %s",
+                    entry.vm.instance_id,
                 )
             try:
-                logger.info("Destroying VM %s", entry.vm.vm_id)
+                logger.info("Destroying VM %s", entry.vm.instance_id)
                 await entry.vm.destroy()
-                logger.info("VM %s destroyed", entry.vm.vm_id)
+                logger.info("VM %s destroyed", entry.vm.instance_id)
             except Exception:
-                logger.exception("Failed to destroy VM %s", entry.vm.vm_id)
+                logger.exception("Failed to destroy VM %s", entry.vm.instance_id)
 
         if entry.pkg_dir:
             cleanup_package(entry.pkg_dir)

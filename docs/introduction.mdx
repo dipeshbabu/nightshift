@@ -6,13 +6,13 @@ description: "Platform for scurely running agents in isolated sandboxes."
 
 <img src="/logo/kokapo.gif" alt="Nightshift mascot" width="200" style={{ margin: "0 auto", display: "block" }} />
 
-Nightshift runs Agents in microVMs using [Firecracker](https://firecracker-microvm.github.io/) for [hardware level isolation](https://linux-kvm.org/page/Main_Page). 
+Nightshift runs Agents in microVMs using [Firecracker](https://firecracker-microvm.github.io/) for [hardware level isolation](https://linux-kvm.org/page/Main_Page).
 Each agent gets its own isolated VM with dedicated vCPUs, memory, filesystem, and network and streams results back via Server-Sent Events.
 
 ## What is Nightshift?
 
-Nightshift is an open source platform for deploying and running Agents in secure, efficient, isolated environments. 
-You write an agent as a Python async generator, deploy it with a single CLI command, and run it on demand. 
+Nightshift is an open source platform for deploying and running Agents in secure, efficient, isolated environments.
+You write an agent as a Python async generator, deploy it with a single CLI command, and run it on demand.
 Each run spins up a dedicated Firecracker microVM with its own resources and network, executes your agent, and streams events back in real time.
 
 A hosted platform is available at `api.nightshift.sh` or you can self-host on any linux machine with KVM support.

@@ -112,7 +112,7 @@ async def test_create_and_get_run(registry):
         config_json="{}", storage_path="/opt/agents/r",
     )
     run = await registry.create_run(agent.id, "t1", "Hello world")
-    assert run.status == "started"
+    assert run.status == "queued"
     assert run.prompt == "Hello world"
 
     fetched = await registry.get_run(run.id)
@@ -168,3 +168,83 @@ async def test_api_key_idempotent(registry):
 
     tenant = await registry.get_tenant_by_key_hash("hash123")
     assert tenant == "tenant_a"
+
+
+# ── Run Events ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_save_and_get_run_events(registry):
+    await registry.save_event("run-1", "nightshift.started", {"workspace": "/a"})
+    await registry.save_event("run-1", "nightshift.completed", {})
+
+    events = await registry.get_run_events("run-1")
+    assert len(events) == 2
+    assert events[0] == ("nightshift.started", {"workspace": "/a"})
+    assert events[1] == ("nightshift.completed", {})
+
+
+@pytest.mark.asyncio
+async def test_get_run_events_empty(registry):
+    events = await registry.get_run_events("nonexistent-run")
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_run_events_ordering(registry):
+    for i in range(5):
+        await registry.save_event("run-1", f"event.{i}", {"index": i})
+
+    events = await registry.get_run_events("run-1")
+    assert len(events) == 5
+    for i, (event_type, payload) in enumerate(events):
+        assert event_type == f"event.{i}"
+        assert payload["index"] == i
+
+
+@pytest.mark.asyncio
+async def test_run_events_isolation(registry):
+    await registry.save_event("run-a", "nightshift.started", {"workspace": "/a"})
+    await registry.save_event("run-b", "nightshift.started", {"workspace": "/b"})
+    await registry.save_event("run-a", "nightshift.completed", {})
+
+    events_a = await registry.get_run_events("run-a")
+    events_b = await registry.get_run_events("run-b")
+
+    assert len(events_a) == 2
+    assert len(events_b) == 1
+    assert events_a[0][1]["workspace"] == "/a"
+    assert events_b[0][1]["workspace"] == "/b"
+
+
+@pytest.mark.asyncio
+async def test_create_run_with_custom_status(registry):
+    agent = await registry.upsert_agent(
+        tenant_id="t1", name="runner",
+        source_filename="r.py", function_name="runner",
+        config_json="{}", storage_path="/opt/agents/r",
+    )
+    run = await registry.create_run(agent.id, "t1", "Hello", status="running")
+    assert run.status == "running"
+
+    fetched = await registry.get_run(run.id)
+    assert fetched.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_update_run_status(registry):
+    agent = await registry.upsert_agent(
+        tenant_id="t1", name="runner",
+        source_filename="r.py", function_name="runner",
+        config_json="{}", storage_path="/opt/agents/r",
+    )
+    run = await registry.create_run(agent.id, "t1", "Hello")
+    assert run.status == "queued"
+
+    await registry.update_run_status(run.id, "running")
+    fetched = await registry.get_run(run.id)
+    assert fetched.status == "running"
+
+    await registry.update_run_status(run.id, "interrupted")
+    fetched = await registry.get_run(run.id)
+    assert fetched.status == "interrupted"
